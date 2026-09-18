@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f3ead7;
+  --ink: #1c1612;
+  --ink-soft: #5c5348;
+  --rule: #d9cbb3;
+  --chili: #b42318;
+  --chili-dark: #8a1a12;
+  --sage: #2f5d4a;
+  --amber: #c49212;
+  --ticket: #fff8ea;
+  --board: #12100e;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), "IBM Plex Sans", system-ui, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.ticket-shadow {
+  box-shadow: 0 10px 30px rgba(28, 22, 18, 0.12);
+}
+
+.kitchen-grid {
+  background-image: radial-gradient(rgba(255, 248, 234, 0.04) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+@keyframes pulse-new {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(180, 35, 24, 0);
+  }
+}
+
+.card-new {
+  animation: pulse-new 1.6s ease-in-out infinite;
+}
