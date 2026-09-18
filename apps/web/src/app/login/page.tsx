@@ -2,12 +2,10 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { saveSession, SessionUser } from "@/lib/session";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("owner@harbourandrye.demo");
   const [password, setPassword] = useState("harbour-demo");
   const [error, setError] = useState("");
@@ -23,7 +21,7 @@ export default function LoginPage() {
         json: { email, password },
       });
       saveSession(res.token, res.user);
-      router.push(res.user.role === "kitchen" ? "/kitchen" : "/app");
+      window.location.assign(res.user.role === "kitchen" ? "/kitchen" : "/app");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not sign in");
     } finally {
@@ -42,7 +40,7 @@ export default function LoginPage() {
       <p className="mt-2 text-sm text-[var(--ink-soft)]">
         Use the demo venue or your own trial account.
       </p>
-      <form onSubmit={onSubmit} className="mt-8 space-y-4">
+      <form onSubmit={onSubmit} method="post" action="/app" className="mt-8 space-y-4">
         <label className="block text-sm">
           Email
           <input
@@ -65,6 +63,7 @@ export default function LoginPage() {
         </label>
         {error ? <p className="text-sm text-[var(--chili)]">{error}</p> : null}
         <button
+          type="submit"
           disabled={busy}
           className="w-full bg-[var(--ink)] py-3 text-sm font-semibold text-[var(--ticket)]"
         >

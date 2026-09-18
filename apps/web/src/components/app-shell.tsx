@@ -30,20 +30,28 @@ export function AppShell({ children }: { children: ReactNode }) {
     const token = getToken();
     const session = getUser();
     if (!token || !session) {
-      router.replace("/login");
+      window.location.replace("/login");
       return;
     }
     setUser(session);
+    let cancelled = false;
     Promise.all([
       api<Restaurant>("/restaurant", { token }),
       api<BillingStatus>("/billing/status", { token }),
     ])
       .then(([r, b]) => {
+        if (cancelled) return;
         setRestaurant(r);
         setBilling(b);
       })
-      .finally(() => setReady(true));
-  }, [router]);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (!ready || !user) {
     return <div className="grid min-h-screen place-items-center text-sm text-[var(--ink-soft)]">Opening the floor…</div>;

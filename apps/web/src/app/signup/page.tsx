@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { saveSession, SessionUser } from "@/lib/session";
 
@@ -13,7 +12,6 @@ interface Preset {
 }
 
 export default function SignupPage() {
-  const router = useRouter();
   const [presets, setPresets] = useState<Preset[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,7 +39,7 @@ export default function SignupPage() {
         json: form,
       });
       saveSession(res.token, res.user);
-      router.push("/app/menu");
+      window.location.assign("/app/menu");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create venue");
     } finally {
@@ -60,7 +58,7 @@ export default function SignupPage() {
       <p className="mt-2 text-sm text-[var(--ink-soft)]">
         Creates the venue, eight tables, and QR tokens. Paste the menu next.
       </p>
-      <form onSubmit={onSubmit} className="mt-8 grid gap-4">
+      <form onSubmit={onSubmit} method="post" action="/app/menu" className="mt-8 grid gap-4">
         <label className="text-sm">
           Your name
           <input
