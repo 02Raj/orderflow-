@@ -5,20 +5,20 @@ import { RegisterSw } from "@/components/register-sw";
 
 const sans = IBM_Plex_Sans({
   variable: "--font-sans",
-  subsets: ["latin"],
+  subsets: ["latin", "latin-ext"],
   weight: ["400", "500", "600", "700"],
 });
 
 const serif = Source_Serif_4({
   variable: "--font-serif",
-  subsets: ["latin"],
+  subsets: ["latin", "latin-ext"],
   weight: ["600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "OrderFlow — QR to kitchen in five minutes",
+  title: "OrderFlow — QR ordering for restaurants worldwide",
   description:
-    "Guests scan a table QR. The kitchen sees the ticket instantly. No hardware lock-in, no app download.",
+    "Guests scan a table QR. The kitchen sees the ticket in real time. Browser POS for independent restaurants in any market — no hardware lock-in.",
   manifest: "/manifest.json",
   appleWebApp: { capable: true, title: "OrderFlow", statusBarStyle: "black-translucent" },
 };

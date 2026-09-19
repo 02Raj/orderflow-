@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { saveSession, SessionUser } from "@/lib/session";
+import { SiteFooter } from "@/components/legal";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("owner@harbourandrye.demo");
@@ -34,17 +35,15 @@ export default function LoginPage() {
       <Link href="/" className="text-sm text-[var(--ink-soft)]">
         ← OrderFlow
       </Link>
-      <h1 className="mt-4 text-4xl" style={{ fontFamily: "var(--font-serif)" }}>
-        Sign in
-      </h1>
+      <h1 className="display mt-4 text-4xl">Sign in</h1>
       <p className="mt-2 text-sm text-[var(--ink-soft)]">
-        Use the demo venue or your own trial account.
+        Demo venue or your trial account. Works from any country.
       </p>
-      <form onSubmit={onSubmit} method="post" action="/app" className="mt-8 space-y-4">
+      <form onSubmit={onSubmit} method="post" action="/app" className="card mt-8 space-y-4 p-5">
         <label className="block text-sm">
           Email
           <input
-            className="mt-1 w-full border border-[var(--rule)] bg-white px-3 py-2"
+            className="field mt-1"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             type="email"
@@ -54,7 +53,7 @@ export default function LoginPage() {
         <label className="block text-sm">
           Password
           <input
-            className="mt-1 w-full border border-[var(--rule)] bg-white px-3 py-2"
+            className="field mt-1"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             type="password"
@@ -62,11 +61,7 @@ export default function LoginPage() {
           />
         </label>
         {error ? <p className="text-sm text-[var(--chili)]">{error}</p> : null}
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full bg-[var(--ink)] py-3 text-sm font-semibold text-[var(--ticket)]"
-        >
+        <button type="submit" disabled={busy} className="btn btn-ink w-full py-3">
           {busy ? "Signing in…" : "Enter venue"}
         </button>
       </form>
@@ -76,6 +71,9 @@ export default function LoginPage() {
           Start a 45-day trial
         </Link>
       </p>
+      <div className="mt-10">
+        <SiteFooter />
+      </div>
     </main>
   );
 }

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../common/types';
+import { resolveRegion } from '../auth/tax-regions';
 
 export interface Restaurant {
   id: string;
@@ -14,6 +15,7 @@ export interface Restaurant {
   taxLabel: string;
   taxRateBp: number;
   taxInclusive: boolean;
+  taxRegion: string | null;
   taxNumber: string | null;
   phone: string | null;
   address: string | null;
@@ -30,6 +32,7 @@ const SELECT = `
          tax_label as "taxLabel",
          tax_rate_bp as "taxRateBp",
          tax_inclusive as "taxInclusive",
+         tax_region as "taxRegion",
          tax_number as "taxNumber",
          phone,
          address
@@ -49,6 +52,15 @@ export class RestaurantsService {
   }
 
   async update(user: AuthenticatedUser, patch: Partial<Restaurant>): Promise<Restaurant> {
+    const current = await this.findById(user.restaurantId);
+    if (patch.taxRegion) {
+      const region = resolveRegion(current.countryCode, patch.taxRegion);
+      if (region) {
+        if (patch.taxRateBp === undefined) patch.taxRateBp = region.taxRateBp;
+        if (patch.taxLabel === undefined && region.taxLabel) patch.taxLabel = region.taxLabel;
+        if (patch.timezone === undefined && region.timezone) patch.timezone = region.timezone;
+      }
+    }
     const columns: Record<string, string> = {
       name: 'name',
       countryCode: 'country_code',
@@ -58,6 +70,7 @@ export class RestaurantsService {
       taxLabel: 'tax_label',
       taxRateBp: 'tax_rate_bp',
       taxInclusive: 'tax_inclusive',
+      taxRegion: 'tax_region',
       taxNumber: 'tax_number',
       phone: 'phone',
       address: 'address',

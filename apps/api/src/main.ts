@@ -2,11 +2,20 @@ import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { json, raw } from 'express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
 
   // Stripe signature verification needs the unparsed body, so that one route opts out of JSON parsing.
   app.use('/billing/webhook/stripe', raw({ type: '*/*' }));

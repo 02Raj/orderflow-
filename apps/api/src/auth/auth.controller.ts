@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { CreateStaffDto, LoginDto, SignupDto } from './dto';
 import { CurrentUser, Public, assertRole } from './public.decorator';
 import { AuthenticatedUser } from '../common/types';
+import { Throttle } from '../common/throttle.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -15,12 +16,14 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle(5, 60)
   @Post('signup')
   signup(@Body() dto: SignupDto) {
     return this.auth.signup(dto);
   }
 
   @Public()
+  @Throttle(5, 60)
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);

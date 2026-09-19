@@ -16,4 +16,14 @@ export class ReportsController {
   recent(@CurrentUser() user: AuthenticatedUser, @Query('days') days?: string) {
     return this.reports.recent(user.restaurantId, days ? Number(days) : 14);
   }
+
+  @Get('range')
+  range(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const today = new Date().toISOString().slice(0, 10);
+    return this.reports.range(user.restaurantId, from || today, to || today);
+  }
 }

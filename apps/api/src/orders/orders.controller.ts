@@ -27,6 +27,11 @@ class StatusDto {
   @IsOptional() @IsString() reason?: string;
 }
 
+class ItemStatusDto {
+  @IsIn(['pending', 'preparing', 'ready'])
+  status: 'pending' | 'preparing' | 'ready';
+}
+
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
@@ -69,5 +74,15 @@ export class OrdersController {
   ) {
     if (dto.status === 'cancelled') assertRole(user, 'staff');
     return this.orders.setStatus(user, id, dto.status, dto.reason);
+  }
+
+  @Patch(':id/items/:itemId/status')
+  setItemStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: ItemStatusDto,
+  ) {
+    return this.orders.setItemStatus(user, id, itemId, dto.status);
   }
 }

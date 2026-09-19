@@ -15,6 +15,7 @@ class CreateItemDto {
   @IsOptional() @IsString() categoryId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsString() imageUrl?: string;
 }
 
 class UpdateItemDto {
@@ -25,6 +26,7 @@ class UpdateItemDto {
   @IsOptional() @IsBoolean() isAvailable?: boolean;
   @IsOptional() @IsString() unavailableReason?: string;
   @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsString() imageUrl?: string;
 }
 
 class ImportMenuDto {

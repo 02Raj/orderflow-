@@ -53,7 +53,7 @@ export class PublicController {
         locale: restaurant.locale,
         taxLabel: restaurant.taxLabel,
         taxInclusive: restaurant.taxInclusive,
-      },
+        taxRateBp: restaurant.taxRateBp,
       table: {
         id: table.tableId,
         number: table.tableNumber,

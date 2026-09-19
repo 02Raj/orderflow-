@@ -5,7 +5,8 @@ import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
 import { AuthenticatedUser, Role } from '../common/types';
 import { AuditService } from '../audit/audit.service';
-import { COUNTRY_PRESETS, CountryPreset, resolvePreset } from './country-presets';
+import { resolveRegion } from './tax-regions';
+import { COUNTRY_PRESETS, CountryPreset, presetWithRegions, resolvePreset } from './country-presets';
 
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 45);
 
@@ -15,6 +16,7 @@ export interface SignupInput {
   fullName: string;
   restaurantName: string;
   countryCode: string;
+  taxRegion?: string;
 }
 
 interface UserRow {
@@ -36,7 +38,9 @@ export class AuthService {
   ) {}
 
   countryPresets(): CountryPreset[] {
-    return COUNTRY_PRESETS;
+    return COUNTRY_PRESETS.slice()
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map(presetWithRegions);
   }
 
   async signup(input: SignupInput) {
@@ -45,14 +49,18 @@ export class AuthService {
     if (existing) throw new BadRequestException('An account with that email already exists');
 
     const preset = resolvePreset(input.countryCode);
+    const region = resolveRegion(preset.countryCode, input.taxRegion);
+    const taxRateBp = region?.taxRateBp ?? preset.taxRateBp;
+    const taxLabel = region?.taxLabel ?? preset.taxLabel;
+    const timezone = region?.timezone ?? preset.timezone;
     const restaurantId = randomUUID();
     const userId = randomUUID();
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
     const slug = await this.uniqueSlug(input.restaurantName);
 
     await this.db.query(
-      `insert into restaurants (id, name, slug, country_code, currency, locale, timezone, tax_label, tax_rate_bp, tax_inclusive)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `insert into restaurants (id, name, slug, country_code, currency, locale, timezone, tax_label, tax_rate_bp, tax_inclusive, tax_region)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         restaurantId,
         input.restaurantName.trim(),
@@ -60,10 +68,11 @@ export class AuthService {
         preset.countryCode,
         preset.currency,
         preset.locale,
-        preset.timezone,
-        preset.taxLabel,
-        preset.taxRateBp,
+        timezone,
+        taxLabel,
+        taxRateBp,
         preset.taxInclusive,
+        region?.code ?? null,
       ],
     );
 
@@ -93,7 +102,7 @@ export class AuthService {
       action: 'signup',
       entity: 'restaurant',
       entityId: restaurantId,
-      metadata: { countryCode: preset.countryCode, slug },
+      metadata: { countryCode: preset.countryCode, taxRegion: region?.code ?? null, slug },
     });
 
     return this.issueToken({

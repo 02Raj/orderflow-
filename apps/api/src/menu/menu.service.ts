@@ -25,6 +25,7 @@ export interface MenuItem {
   isAvailable: boolean;
   unavailableReason: string | null;
   sortOrder: number;
+  imageUrl: string | null;
   modifiers: MenuModifier[];
 }
 
@@ -45,7 +46,7 @@ export class MenuService {
       this.db.many<Omit<MenuItem, 'modifiers'>>(
         `select id, category_id as "categoryId", name, description, price_minor as "priceMinor",
                 is_available as "isAvailable", unavailable_reason as "unavailableReason",
-                sort_order as "sortOrder"
+                sort_order as "sortOrder", image_url as "imageUrl"
          from menu_items
          where restaurant_id = $1 and archived_at is null order by sort_order, name`,
         [restaurantId],
@@ -91,12 +92,13 @@ export class MenuService {
       categoryId?: string | null;
       description?: string | null;
       sortOrder?: number;
+      imageUrl?: string | null;
     },
   ) {
     const id = randomUUID();
     await this.db.query(
-      `insert into menu_items (id, restaurant_id, category_id, name, description, price_minor, sort_order)
-       values ($1, $2, $3, $4, $5, $6, $7)`,
+      `insert into menu_items (id, restaurant_id, category_id, name, description, price_minor, sort_order, image_url)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         id,
         user.restaurantId,
@@ -105,6 +107,7 @@ export class MenuService {
         input.description?.trim() || null,
         input.priceMinor,
         input.sortOrder ?? 0,
+        input.imageUrl?.trim() || null,
       ],
     );
     return this.findItem(user.restaurantId, id);
@@ -129,7 +132,10 @@ export class MenuService {
     user: AuthenticatedUser,
     itemId: string,
     patch: Partial<
-      Pick<MenuItem, 'name' | 'priceMinor' | 'categoryId' | 'isAvailable' | 'sortOrder' | 'description'>
+      Pick<
+        MenuItem,
+        'name' | 'priceMinor' | 'categoryId' | 'isAvailable' | 'sortOrder' | 'description' | 'imageUrl'
+      >
     > & { unavailableReason?: string | null },
   ) {
     const columns: Record<string, string> = {
@@ -140,6 +146,7 @@ export class MenuService {
       unavailableReason: 'unavailable_reason',
       sortOrder: 'sort_order',
       description: 'description',
+      imageUrl: 'image_url',
     };
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -238,7 +245,7 @@ export class MenuService {
     const item = await this.db.one<Omit<MenuItem, 'modifiers'>>(
       `select id, category_id as "categoryId", name, description, price_minor as "priceMinor",
               is_available as "isAvailable", unavailable_reason as "unavailableReason",
-              sort_order as "sortOrder"
+              sort_order as "sortOrder", image_url as "imageUrl"
        from menu_items where id = $1 and restaurant_id = $2`,
       [id, restaurantId],
     );

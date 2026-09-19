@@ -202,6 +202,40 @@ export class OrdersService {
     return saved;
   }
 
+  async setItemStatus(
+    user: AuthenticatedUser,
+    orderId: string,
+    itemId: string,
+    status: 'pending' | 'preparing' | 'ready',
+  ) {
+    const order = await this.findById(user.restaurantId, orderId);
+    const item = order.items.find((row) => row.id === itemId);
+    if (!item) throw new NotFoundException('Order item not found');
+    const allowed = allowedItemTransitions(item.status);
+    if (!allowed.includes(status)) {
+      throw new BadRequestException(`Cannot move an item from ${item.status} to ${status}`);
+    }
+
+    await this.db.query(
+      `update order_items set status = $1
+       where id = $2 and order_id = $3 and restaurant_id = $4`,
+      [status, itemId, orderId, user.restaurantId],
+    );
+
+    await this.audit.record({
+      restaurantId: user.restaurantId,
+      userId: user.id,
+      action: `order.item.${status}`,
+      entity: 'order_item',
+      entityId: itemId,
+      metadata: { orderId, from: item.status },
+    });
+
+    const saved = await this.findById(user.restaurantId, orderId);
+    this.events.emit(`orders:${user.restaurantId}`, { type: 'updated', order: saved });
+    return saved;
+  }
+
   async findById(restaurantId: string, orderId: string) {
     const order = await this.db.one<OrderRow>(`${ORDER_SELECT} where o.id = $1 and o.restaurant_id = $2`, [
       orderId,
@@ -296,6 +330,17 @@ export class OrdersService {
       [restaurantId, businessDate],
     );
     return Number(row?.next ?? 1);
+  }
+}
+
+function allowedItemTransitions(from: string): Array<'pending' | 'preparing' | 'ready'> {
+  switch (from) {
+    case 'pending':
+      return ['preparing'];
+    case 'preparing':
+      return ['ready'];
+    default:
+      return [];
   }
 }
 

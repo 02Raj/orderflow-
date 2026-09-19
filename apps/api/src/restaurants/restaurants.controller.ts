@@ -13,6 +13,7 @@ class UpdateRestaurantDto {
   @IsOptional() @IsString() taxLabel?: string;
   @IsOptional() @IsInt() @Min(0) @Max(5000) taxRateBp?: number;
   @IsOptional() @IsBoolean() taxInclusive?: boolean;
+  @IsOptional() @IsString() taxRegion?: string;
   @IsOptional() @IsString() taxNumber?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() address?: string;

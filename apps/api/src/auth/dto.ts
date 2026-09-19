@@ -18,6 +18,10 @@ export class SignupDto {
 
   @IsString()
   countryCode: string;
+
+  @IsOptional()
+  @IsString()
+  taxRegion?: string;
 }
 
 export class LoginDto {

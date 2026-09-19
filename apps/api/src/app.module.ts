@@ -13,6 +13,7 @@ import { MenuController } from './menu/menu.controller';
 import { TablesService } from './tables/tables.service';
 import { TablesController } from './tables/tables.controller';
 import { OrdersService } from './orders/orders.service';
+import { OrdersSseController } from './orders/orders.sse.controller';
 import { OrdersController } from './orders/orders.controller';
 import { PublicController } from './public/public.controller';
 import { ReportsService } from './reports/reports.service';
@@ -20,6 +21,7 @@ import { ReportsController } from './reports/reports.controller';
 import { BillingService } from './billing/billing.service';
 import { BillingController } from './billing/billing.controller';
 import { SubscriptionGuard } from './billing/subscription.guard';
+import { ThrottleGuard } from './common/throttle.guard';
 import { HealthController } from './health.controller';
 
 @Global()
@@ -30,6 +32,7 @@ import { HealthController } from './health.controller';
     RestaurantsController,
     MenuController,
     TablesController,
+    OrdersSseController,
     OrdersController,
     PublicController,
     ReportsController,
@@ -47,6 +50,7 @@ import { HealthController } from './health.controller';
     BillingService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: SubscriptionGuard },
+    { provide: APP_GUARD, useClass: ThrottleGuard },
   ],
   exports: [DatabaseService, AuditService, BillingService, MenuService, TablesService, OrdersService],
 })

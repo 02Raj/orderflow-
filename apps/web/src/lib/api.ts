@@ -1,5 +1,5 @@
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "/backend";
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "/api";
 
 export class ApiError extends Error {
   constructor(

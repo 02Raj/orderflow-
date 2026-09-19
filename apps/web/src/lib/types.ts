@@ -9,6 +9,8 @@ export interface Restaurant {
   taxLabel: string;
   taxRateBp: number;
   taxInclusive: boolean;
+  taxRegion?: string | null;
+  taxNumber?: string | null;
   phone: string | null;
   address: string | null;
 }
@@ -27,6 +29,7 @@ export interface MenuItem {
   priceMinor: number;
   isAvailable: boolean;
   unavailableReason: string | null;
+  imageUrl?: string | null;
   modifiers: MenuModifier[];
 }
 
@@ -49,6 +52,7 @@ export interface OrderItem {
   name: string;
   quantity: number;
   note: string | null;
+  status?: string;
   unitPriceMinor?: number;
   lineTotalMinor?: number;
   modifiers?: { name: string; priceAdjustmentMinor?: number }[];

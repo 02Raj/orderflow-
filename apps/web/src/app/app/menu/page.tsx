@@ -1,6 +1,7 @@
 "use client";
 
 import { AppShell } from "@/components/app-shell";
+import { PageHeader } from "@/components/ui";
 import { api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { MenuCategory, MenuItem, Restaurant } from "@/lib/types";
@@ -17,9 +18,11 @@ export default function MenuPage() {
     price: "",
     categoryId: "",
     description: "",
+    imageUrl: "",
   });
   const [catName, setCatName] = useState("");
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   async function reload(current = token) {
     if (!current) return;
@@ -28,6 +31,7 @@ export default function MenuPage() {
     });
     setCategories(menu.categories);
     setItems(menu.items);
+    setLoaded(true);
   }
 
   useEffect(() => {
@@ -35,7 +39,7 @@ export default function MenuPage() {
     setToken(t);
     if (!t) return;
     api<Restaurant>("/restaurant", { token: t }).then(setRestaurant);
-    reload(t).catch(() => undefined);
+    reload(t).catch(() => setLoaded(true));
   }, []);
 
   async function importMenu(e: FormEvent) {
@@ -71,9 +75,16 @@ export default function MenuPage() {
         priceMinor,
         categoryId: itemForm.categoryId || undefined,
         description: itemForm.description,
+        imageUrl: itemForm.imageUrl || undefined,
       },
     });
-    setItemForm({ name: "", price: "", categoryId: itemForm.categoryId, description: "" });
+    setItemForm({
+      name: "",
+      price: "",
+      categoryId: itemForm.categoryId,
+      description: "",
+      imageUrl: "",
+    });
     await reload();
   }
 
@@ -93,51 +104,57 @@ export default function MenuPage() {
     <AppShell>
       <div className="grid gap-8 p-5 md:grid-cols-[1fr_320px] md:p-8">
         <div>
-          <h1 className="text-4xl" style={{ fontFamily: "var(--font-serif)" }}>
-            Menu
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-[var(--ink-soft)]">
-            Paste the menu you already have. Format: a category ending with a colon, then one item
-            and price per line.
-          </p>
+          <PageHeader
+            kicker="Catalogue"
+            title="Menu"
+            copy="Paste the menu you already have. Format: a category ending with a colon, then one item and price per line. Optional photo URLs show on the guest menu."
+          />
           {error ? <p className="mt-3 text-sm text-[var(--chili)]">{error}</p> : null}
 
-          {categories.length === 0 ? (
-            <form onSubmit={importMenu} className="mt-6">
+          {!loaded ? (
+            <div className="mt-8 skeleton h-64 w-full" />
+          ) : categories.length === 0 ? (
+            <form onSubmit={importMenu} className="card mt-6 p-4">
               <textarea
-                className="h-48 w-full border border-[var(--rule)] bg-white p-3 text-sm"
+                className="field h-48"
                 placeholder={"Mains:\nFish pie 16.50\nRye chicken 17.50\nDrinks:\nLemonade 3.50"}
                 value={paste}
                 onChange={(e) => setPaste(e.target.value)}
               />
-              <button className="mt-3 bg-[var(--chili)] px-4 py-2 text-sm text-[var(--ticket)]">
-                Import menu
-              </button>
+              <button className="btn btn-chili mt-3">Import menu</button>
             </form>
           ) : (
             <div className="mt-6 space-y-8">
               {categories.map((cat) => (
-                <section key={cat.id}>
-                  <h2 className="border-b border-[var(--rule)] pb-2 text-xl" style={{ fontFamily: "var(--font-serif)" }}>
-                    {cat.name}
-                  </h2>
+                <section key={cat.id} className="card p-5">
+                  <h2 className="display border-b border-[var(--rule)] pb-2 text-xl">{cat.name}</h2>
                   <ul>
                     {items
                       .filter((item) => item.categoryId === cat.id)
                       .map((item) => (
                         <li key={item.id} className="flex items-start justify-between gap-3 py-3">
-                          <div>
-                            <p className={!item.isAvailable ? "line-through opacity-60" : ""}>
-                              {item.name}
-                            </p>
-                            {item.description ? (
-                              <p className="text-xs text-[var(--ink-soft)]">{item.description}</p>
+                          <div className="flex gap-3">
+                            {item.imageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={item.imageUrl}
+                                alt=""
+                                className="h-12 w-12 rounded-lg object-cover"
+                              />
                             ) : null}
-                            {item.modifiers?.length ? (
-                              <p className="text-xs text-[var(--ink-soft)]">
-                                {item.modifiers.map((m) => m.name).join(" · ")}
+                            <div>
+                              <p className={!item.isAvailable ? "line-through opacity-60" : ""}>
+                                {item.name}
                               </p>
-                            ) : null}
+                              {item.description ? (
+                                <p className="text-xs text-[var(--ink-soft)]">{item.description}</p>
+                              ) : null}
+                              {item.modifiers?.length ? (
+                                <p className="text-xs text-[var(--ink-soft)]">
+                                  {item.modifiers.map((m) => m.name).join(" · ")}
+                                </p>
+                              ) : null}
+                            </div>
                           </div>
                           <div className="flex items-center gap-3 text-sm">
                             <span>{formatMoney(item.priceMinor, currency, restaurant?.locale)}</span>
@@ -155,22 +172,20 @@ export default function MenuPage() {
         </div>
 
         <aside className="space-y-6">
-          <form onSubmit={addCategory} className="border border-[var(--rule)] bg-[var(--ticket)] p-4">
+          <form onSubmit={addCategory} className="card p-4">
             <h3 className="font-semibold">Add category</h3>
             <input
-              className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+              className="field mt-2"
               value={catName}
               onChange={(e) => setCatName(e.target.value)}
               required
             />
-            <button className="mt-2 w-full bg-[var(--ink)] py-2 text-sm text-[var(--ticket)]">
-              Add
-            </button>
+            <button className="btn btn-ink mt-2 w-full">Add</button>
           </form>
-          <form onSubmit={addItem} className="border border-[var(--rule)] bg-[var(--ticket)] p-4">
+          <form onSubmit={addItem} className="card p-4">
             <h3 className="font-semibold">Add item</h3>
             <select
-              className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+              className="field mt-2"
               value={itemForm.categoryId}
               onChange={(e) => setItemForm({ ...itemForm, categoryId: e.target.value })}
             >
@@ -182,37 +197,41 @@ export default function MenuPage() {
               ))}
             </select>
             <input
-              className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+              className="field mt-2"
               placeholder="Name"
               required
               value={itemForm.name}
               onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })}
             />
             <input
-              className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+              className="field mt-2"
               placeholder="Price"
               required
               value={itemForm.price}
               onChange={(e) => setItemForm({ ...itemForm, price: e.target.value })}
             />
             <input
-              className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+              className="field mt-2"
               placeholder="Description"
               value={itemForm.description}
               onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })}
             />
-            <button className="mt-2 w-full bg-[var(--ink)] py-2 text-sm text-[var(--ticket)]">
-              Add item
-            </button>
+            <input
+              className="field mt-2"
+              placeholder="Image URL (optional)"
+              value={itemForm.imageUrl}
+              onChange={(e) => setItemForm({ ...itemForm, imageUrl: e.target.value })}
+            />
+            <button className="btn btn-ink mt-2 w-full">Add item</button>
           </form>
-          <form onSubmit={importMenu} className="border border-[var(--rule)] bg-[var(--ticket)] p-4">
+          <form onSubmit={importMenu} className="card p-4">
             <h3 className="font-semibold">Paste more items</h3>
             <textarea
-              className="mt-2 h-28 w-full border border-[var(--rule)] p-2 text-sm"
+              className="field mt-2 h-28"
               value={paste}
               onChange={(e) => setPaste(e.target.value)}
             />
-            <button className="mt-2 w-full border border-[var(--ink)] py-2 text-sm">Import</button>
+            <button className="btn btn-ghost mt-2 w-full">Import</button>
           </form>
         </aside>
       </div>

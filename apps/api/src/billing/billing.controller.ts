@@ -4,6 +4,7 @@ import { IsOptional, IsString } from 'class-validator';
 import { BillingService } from './billing.service';
 import { CurrentUser, Public, assertRole } from '../auth/public.decorator';
 import { AuthenticatedUser } from '../common/types';
+import { Throttle } from '../common/throttle.guard';
 
 class CheckoutDto {
   @IsOptional() @IsString() successUrl?: string;
@@ -19,6 +20,7 @@ export class BillingController {
     return this.billing.status(user.restaurantId);
   }
 
+  @Throttle(5, 60)
   @Post('checkout')
   checkout(@CurrentUser() user: AuthenticatedUser, @Body() dto: CheckoutDto) {
     assertRole(user, 'owner');

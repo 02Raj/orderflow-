@@ -1,6 +1,7 @@
 "use client";
 
 import { AppShell } from "@/components/app-shell";
+import { EmptyState, PageHeader } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { FormEvent, useEffect, useState } from "react";
@@ -15,6 +16,7 @@ interface StaffRow {
 
 export default function StaffPage() {
   const [staff, setStaff] = useState<StaffRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [form, setForm] = useState({
     fullName: "",
     email: "",
@@ -26,10 +28,11 @@ export default function StaffPage() {
     const token = getToken();
     if (!token) return;
     setStaff(await api<StaffRow[]>("/auth/staff", { token }));
+    setLoaded(true);
   }
 
   useEffect(() => {
-    reload().catch(() => undefined);
+    reload().catch(() => setLoaded(true));
   }, []);
 
   async function create(e: FormEvent) {
@@ -45,32 +48,40 @@ export default function StaffPage() {
     <AppShell>
       <div className="grid gap-8 p-5 md:grid-cols-2 md:p-8">
         <div>
-          <h1 className="text-4xl" style={{ fontFamily: "var(--font-serif)" }}>
-            Staff
-          </h1>
-          <ul className="mt-6 divide-y divide-[var(--rule)]">
-            {staff.map((row) => (
-              <li key={row.id} className="flex justify-between py-3 text-sm">
-                <span>
-                  {row.fullName}
-                  <span className="block text-[var(--ink-soft)]">{row.email}</span>
-                </span>
-                <span className="capitalize">{row.role}</span>
-              </li>
-            ))}
-          </ul>
+          <PageHeader
+            kicker="Team"
+            title="Staff"
+            copy="Station logins for floor, kitchen, and managers. Same product in every market."
+          />
+          {!loaded ? (
+            <div className="skeleton mt-6 h-40 w-full" />
+          ) : staff.length === 0 ? (
+            <EmptyState title="No logins yet" copy="Create a kitchen login so the pass never shares the owner password." />
+          ) : (
+            <ul className="card mt-6 divide-y divide-[var(--rule)] px-4">
+              {staff.map((row) => (
+                <li key={row.id} className="flex justify-between py-3 text-sm">
+                  <span>
+                    {row.fullName}
+                    <span className="block text-[var(--ink-soft)]">{row.email}</span>
+                  </span>
+                  <span className="capitalize">{row.role}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        <form onSubmit={create} className="border border-[var(--rule)] bg-[var(--ticket)] p-5">
+        <form onSubmit={create} className="card p-5">
           <h2 className="font-semibold">Invite a station login</h2>
           <input
-            className="mt-3 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+            className="field mt-3"
             placeholder="Name"
             required
             value={form.fullName}
             onChange={(e) => setForm({ ...form, fullName: e.target.value })}
           />
           <input
-            className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+            className="field mt-2"
             placeholder="Email"
             type="email"
             required
@@ -78,7 +89,7 @@ export default function StaffPage() {
             onChange={(e) => setForm({ ...form, email: e.target.value })}
           />
           <input
-            className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+            className="field mt-2"
             placeholder="Password"
             minLength={8}
             required
@@ -86,7 +97,7 @@ export default function StaffPage() {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
           <select
-            className="mt-2 w-full border border-[var(--rule)] px-2 py-2 text-sm"
+            className="field mt-2"
             value={form.role}
             onChange={(e) => setForm({ ...form, role: e.target.value })}
           >
@@ -94,9 +105,7 @@ export default function StaffPage() {
             <option value="staff">Floor staff</option>
             <option value="kitchen">Kitchen</option>
           </select>
-          <button className="mt-4 w-full bg-[var(--ink)] py-2 text-sm text-[var(--ticket)]">
-            Create login
-          </button>
+          <button className="btn btn-ink mt-4 w-full">Create login</button>
         </form>
       </div>
     </AppShell>
