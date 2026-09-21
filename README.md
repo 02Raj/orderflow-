@@ -2,19 +2,18 @@
 
 Browser POS for independent restaurants: **QR on the table → ticket on the kitchen screen**.
 
-This is intentionally not a full POS. Guest card capture, inventory, loyalty, payroll and delivery-app sync are out of the MVP. The product exists to stop lost and wrong kitchen tickets without buying Toast/Clover hardware.
+This is a single **Next.js** app (UI + `/api` route handlers). It is not a full POS. Guest card capture, inventory, loyalty, payroll and delivery-app sync are out of the MVP.
 
-## Run locally ($0, no credentials)
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-- Web PWA: http://127.0.0.1:43123
-- API: http://127.0.0.1:4322
+Open http://127.0.0.1:43123
 
-Demo venue (seeded on first API boot):
+Demo venue (seeded on first boot):
 
 - Email: `owner@harbourandrye.demo`
 - Password: `harbour-demo`
@@ -23,7 +22,7 @@ Open **Tables / QR**, tap **Open guest menu** on a phone, send a ticket, watch i
 
 ## Credentials later
 
-Copy `.env.example` to `apps/api/.env`.
+Copy `.env.example` to `.env.local`.
 
 | Variable | Required to start? | Purpose |
 | --- | --- | --- |
@@ -32,18 +31,16 @@ Copy `.env.example` to `apps/api/.env`.
 | `STRIPE_SECRET_KEY` | No | Unset = mock checkout so you can test trial → paid. |
 | `STRIPE_PRICE_ID` | With Stripe | Recurring $29 price. |
 | `STRIPE_WEBHOOK_SECRET` | With Stripe | Signature verification. |
-| `APP_PUBLIC_URL` | Production | Frontend origin. |
-| `CORS_ORIGINS` | Production | Comma-separated frontend origins. |
+| `APP_PUBLIC_URL` | Production | App origin. |
 | `TRIAL_DAYS` | No | Default 45. |
 
-Frontend talks to the API through Next rewrites (`/backend/*`), so one preview port is enough.
+API lives at `/api/*` on the same origin. SSE kitchen tickets need a long-running Node process (`npm run start`), not a serverless timeout.
 
 ## Deploy
 
-- **Web:** Vercel, root `apps/web`, env `API_INTERNAL_URL` pointing at the API.
-- **API:** Railway / Render / Fly (Nest cannot be a long-running server on Vercel). Free tiers are enough until a restaurant is paying.
-- **Database / Auth later:** Supabase Postgres. Apply `apps/api/src/database/schema.sql` then `rls.sql`. Nest keeps using the service connection; RLS is defence in depth for a future Realtime kitchen client.
+- **App:** Vercel or any Node host that can run `next start` (SSE). Env: `JWT_SECRET`, optional `DATABASE_URL` and Stripe keys.
+- **Database:** Unset `DATABASE_URL` for local PGlite. Production: Supabase Postgres. Apply `src/server/database/schema.sql` then `rls.sql`.
 
 ## Product bet
 
-See `docs/STRATEGY.md`. The first objective is one real restaurant using this during service, then paying $29/month after the 45-day trial. If tickets are not used during a real rush, stop — do not add features.
+See `docs/STRATEGY.md`. The first objective is one real restaurant using this during service, then paying $29/month after the 45-day trial.
