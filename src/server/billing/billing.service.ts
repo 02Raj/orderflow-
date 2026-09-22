@@ -1,6 +1,7 @@
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser, SubscriptionStatus } from '../common/types';
+import { PAYMENTS_ENABLED } from '../../lib/payments';
 
 export interface SubscriptionView {
   status: SubscriptionStatus;
@@ -47,7 +48,7 @@ export class BillingService {
     const daysLeftInTrial = Math.max(0, Math.ceil(msLeft / (24 * 60 * 60 * 1000)));
 
     let status: SubscriptionStatus = row?.status ?? 'trialing';
-    if (status === 'trialing' && msLeft <= 0) status = 'expired';
+    if (PAYMENTS_ENABLED && status === 'trialing' && msLeft <= 0) status = 'expired';
 
     return {
       status,
@@ -56,7 +57,7 @@ export class BillingService {
       currentPeriodEnd: row?.current_period_end ?? null,
       provider: row?.provider ?? null,
       daysLeftInTrial,
-      accessBlocked: status === 'expired' || status === 'canceled',
+      accessBlocked: PAYMENTS_ENABLED && (status === 'expired' || status === 'canceled'),
             priceLabel: process.env.PRICE_LABEL ?? '$29 / month',
       mockMode: this.mockMode,
     };

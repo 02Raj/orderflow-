@@ -1,4 +1,5 @@
 import { LegalLayout } from "@/components/legal";
+import { MAIL } from "@/lib/site";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -58,7 +59,7 @@ export default function PrivacyPage() {
       <ul className="list-disc space-y-1 pl-5">
         <li>To provide the product you signed up for (contract).</li>
         <li>To secure the service (rate limits, Helmet headers, audit logs, JWT expiry).</li>
-        <li>To bill a subscription when you choose to pay (Stripe or a local mock in development).</li>
+        <li>To bill a subscription only if paid billing is turned on later.</li>
         <li>Guest orders: only to deliver the ticket to that restaurant’s kitchen.</li>
       </ul>
       <p>We do not sell personal data. We do not run advertising pixels or sell lookalike audiences.</p>
@@ -90,8 +91,8 @@ export default function PrivacyPage() {
         European DPA, California CPPA, UAE / Saudi PDPL authority, or India’s Data Protection
         Board). Guests should contact the restaurant first — they control the order. We will help
         the restaurant fulfil the request. Write to{" "}
-        <a className="underline" href="mailto:privacy@orderflow.app">
-          privacy@orderflow.app
+        <a className="underline" href={`mailto:${MAIL.privacy}`}>
+          {MAIL.privacy}
         </a>
         .
       </p>

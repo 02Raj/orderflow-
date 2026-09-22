@@ -16,6 +16,7 @@ const serif = Source_Serif_4({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.APP_PUBLIC_URL ?? "https://helloorderflow.com"),
   title: "OrderFlow — QR ordering for restaurants worldwide",
   description:
     "Guests scan a table QR. The kitchen sees the ticket in real time. Browser POS for independent restaurants in any market — no hardware lock-in.",

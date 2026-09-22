@@ -1,4 +1,5 @@
 import { LegalLayout } from "@/components/legal";
+import { MAIL } from "@/lib/site";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -57,8 +58,8 @@ export default function SecurityPage() {
           DPA
         </Link>
         . Report a vulnerability:{" "}
-        <a className="underline" href="mailto:security@orderflow.app">
-          security@orderflow.app
+        <a className="underline" href={`mailto:${MAIL.security}`}>
+          {MAIL.security}
         </a>
         .
       </p>

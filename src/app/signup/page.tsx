@@ -226,7 +226,7 @@ export default function SignupPage() {
               Back
             </button>
             <button disabled={busy || !agreed} className="btn btn-chili flex-[1.4] py-3">
-              {busy ? "Opening…" : "Start free trial"}
+              {busy ? "Opening…" : "Create venue"}
             </button>
           </div>
         </form>

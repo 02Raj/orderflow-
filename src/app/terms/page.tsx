@@ -1,4 +1,5 @@
 import { LegalLayout } from "@/components/legal";
+import { MAIL } from "@/lib/site";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -39,10 +40,9 @@ export default function TermsPage() {
 
       <h2 className="display pt-4 text-2xl">Trial and fees</h2>
       <p>
-        New venues start on a 45-day trial unless we say otherwise. After trial, ordering may pause
-        until you subscribe. Price is shown at signup and on the marketing site (currently USD 29
-        per venue / month). We may change price with notice for future periods; we will not silently
-        add hardware or payment lock-in.
+        Paid subscriptions are not turned on yet. Venues can use OrderFlow without a card. If we
+        start charging later, the price will be shown on the site before anyone is billed, and we
+        will not silently add hardware or payment lock-in.
       </p>
 
       <h2 className="display pt-4 text-2xl">Data and privacy</h2>
@@ -84,8 +84,8 @@ export default function TermsPage() {
 
       <p>
         Questions:{" "}
-        <a className="underline" href="mailto:hello@orderflow.app">
-          hello@orderflow.app
+        <a className="underline" href={`mailto:${MAIL.hello}`}>
+          {MAIL.hello}
         </a>
         .
       </p>

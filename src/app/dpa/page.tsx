@@ -1,4 +1,5 @@
 import { LegalLayout } from "@/components/legal";
+import { MAIL } from "@/lib/site";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -64,8 +65,8 @@ export default function DpaPage() {
 
       <p>
         Contact:{" "}
-        <a className="underline" href="mailto:privacy@orderflow.app">
-          privacy@orderflow.app
+        <a className="underline" href={`mailto:${MAIL.privacy}`}>
+          {MAIL.privacy}
         </a>
         .
       </p>

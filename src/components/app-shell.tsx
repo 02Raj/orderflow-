@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { clearSession, getToken, getUser, SessionUser } from "@/lib/session";
+import { PAYMENTS_ENABLED } from "@/lib/payments";
 import { BillingStatus, Restaurant } from "@/lib/types";
 import { useOrderStream } from "@/lib/use-order-stream";
 import { Icons } from "@/components/icons";
@@ -41,7 +42,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     let cancelled = false;
     Promise.all([
       api<Restaurant>("/restaurant", { token }),
-      api<BillingStatus>("/billing/status", { token }),
+      PAYMENTS_ENABLED
+        ? api<BillingStatus>("/billing/status", { token })
+        : Promise.resolve(null),
     ])
       .then(([r, b]) => {
         if (cancelled) return;
@@ -93,12 +96,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             Sign out
           </button>
         </div>
-        {billing && !billing.accessBlocked && billing.status === "trialing" ? (
+        {PAYMENTS_ENABLED && billing && !billing.accessBlocked && billing.status === "trialing" ? (
           <p className="mx-4 mb-3 rounded-[12px] border border-[#ead7a4] bg-[#fff4d6] px-3 py-2 text-xs">
             Trial · <strong>{billing.daysLeftInTrial} days left</strong> · {billing.priceLabel}
           </p>
         ) : null}
-        {billing?.accessBlocked ? (
+        {PAYMENTS_ENABLED && billing?.accessBlocked ? (
           <p className="mx-4 mb-3 rounded-[12px] bg-[#f3d0c8] px-3 py-2 text-xs">
             Trial ended. Ordering is paused.{" "}
             <Link href="/app/settings" className="font-semibold underline">

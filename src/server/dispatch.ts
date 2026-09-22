@@ -4,6 +4,7 @@ import { HttpError, UnauthorizedException, NotFoundException, BadRequestExceptio
 import { assertRole } from './roles';
 import { clientKey, throttle } from './throttle';
 import { assertWritableSubscription } from './subscription';
+import { PAYMENTS_ENABLED } from '../lib/payments';
 import { getServices } from './services';
 import type { AuthenticatedUser, OrderStatus } from './common/types';
 import type { Restaurant } from './restaurants/restaurants.service';
@@ -100,7 +101,11 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
         status: 'ok',
         database: svc.db.mode,
         latencyMs: Date.now() - started,
-        paymentsMode: process.env.STRIPE_SECRET_KEY ? 'stripe' : 'mock',
+        paymentsMode: PAYMENTS_ENABLED
+          ? process.env.STRIPE_SECRET_KEY
+            ? 'stripe'
+            : 'mock'
+          : 'off',
         trialDays: Number(process.env.TRIAL_DAYS ?? 45),
       });
     }
@@ -389,7 +394,7 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
       return json(await svc.billing.status(user!.restaurantId));
     }
 
-    if (method === 'POST' && path === '/billing/checkout') {
+    if (PAYMENTS_ENABLED && method === 'POST' && path === '/billing/checkout') {
       throttle(clientKey(request, 'checkout'), 5, 60);
       assertRole(user!, 'owner');
       const body = await readJson<{ successUrl?: string; cancelUrl?: string }>(request);
@@ -403,7 +408,7 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
       );
     }
 
-    if (method === 'GET' && path === '/billing/mock-confirm') {
+    if (PAYMENTS_ENABLED && method === 'GET' && path === '/billing/mock-confirm') {
       const restaurantId = request.nextUrl.searchParams.get('restaurantId') ?? '';
       const redirect = request.nextUrl.searchParams.get('redirect') || '/';
       if (svc.billing.mockMode && restaurantId) {
@@ -415,7 +420,7 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
       return NextResponse.redirect(dest);
     }
 
-    if (method === 'POST' && path === '/billing/webhook/stripe') {
+    if (PAYMENTS_ENABLED && method === 'POST' && path === '/billing/webhook/stripe') {
       const signature = request.headers.get('stripe-signature') ?? '';
       const raw = Buffer.from(await request.arrayBuffer());
       return json(await svc.billing.handleStripeEvent(raw, signature));

@@ -1,17 +1,21 @@
 import Link from "next/link";
 import { ReactNode } from "react";
+import { MAIL, SITE_DOMAIN } from "@/lib/site";
 
 export function SiteFooter() {
   return (
     <footer className="border-t border-[var(--rule)]">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-sm text-[var(--ink-soft)]">
-        <span>© {new Date().getFullYear()} OrderFlow · We do not sell guest or venue data</span>
+        <span>
+          © {new Date().getFullYear()} OrderFlow · {SITE_DOMAIN} · We do not sell guest or venue
+          data
+        </span>
         <nav className="flex flex-wrap gap-4">
           <Link href="/privacy">Privacy</Link>
           <Link href="/terms">Terms</Link>
           <Link href="/dpa">DPA</Link>
           <Link href="/security">Security</Link>
-          <a href="mailto:privacy@orderflow.app">privacy@orderflow.app</a>
+          <a href={`mailto:${MAIL.privacy}`}>{MAIL.privacy}</a>
         </nav>
       </div>
     </footer>

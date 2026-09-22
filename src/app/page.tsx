@@ -10,14 +10,11 @@ export default function HomePage() {
       <header className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5">
         <BrandLink />
         <nav className="flex items-center gap-3 text-sm">
-          <a href="#pricing" className="hidden px-3 py-2 text-[var(--ink-soft)] sm:inline">
-            Pricing
-          </a>
           <Link href="/login" className="px-3 py-2 text-[var(--ink-soft)]">
             Sign in
           </Link>
           <Link href="/signup" className="btn btn-ink">
-            Start 45-day trial
+            Open a venue
           </Link>
         </nav>
       </header>
@@ -102,7 +99,7 @@ export default function HomePage() {
             ],
             [
               "No hardware lock-in",
-              "Runs in Chrome, Safari, and as a PWA on a spare laptop or kitchen tablet. Cancel anytime. $29 / month.",
+              "Runs in Chrome, Safari, and as a PWA on a spare laptop or kitchen tablet. No card required.",
             ],
           ].map(([title, copy]) => (
             <article key={title} className="rise-in">
@@ -155,28 +152,27 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="pricing" className="mx-auto max-w-6xl px-5 py-16">
+      <section className="mx-auto max-w-6xl px-5 py-16">
         <div className="card grid gap-8 p-8 md:grid-cols-[1.2fr_0.8fr] md:items-center">
           <div>
-            <h2 className="display text-3xl md:text-4xl">$29 / month. 45 days free.</h2>
+            <h2 className="display text-3xl md:text-4xl">Open your venue. No card.</h2>
             <p className="mt-3 max-w-xl text-[var(--ink-soft)]">
-              One price billed in USD via Stripe. Guest card capture is out of the MVP on purpose —
-              you keep the processor you already trust. Unlimited tables, tickets, and kitchen
-              screens.
+              Early access is free. Guest card capture stays out on purpose — you keep the processor
+              you already trust. Unlimited tables, tickets, and kitchen screens.
             </p>
             <ul className="mt-5 space-y-2 text-sm">
               <li>✓ Real-time kitchen tickets</li>
               <li>✓ QR menus in the guest’s browser</li>
               <li>✓ Tax presets for 25+ countries</li>
-              <li>✓ Cancel from settings. No hardware return.</li>
+              <li>✓ No hardware contract.</li>
             </ul>
           </div>
           <div className="rounded-2xl bg-[var(--ink)] p-6 text-[var(--ticket)]">
-            <p className="text-xs uppercase tracking-[0.2em] text-[#c9b89a]">Starter</p>
-            <p className="display mt-2 text-5xl">$29</p>
-            <p className="text-sm text-[#c9b89a]">per venue / month</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#c9b89a]">Early access</p>
+            <p className="display mt-2 text-5xl">Free</p>
+            <p className="text-sm text-[#c9b89a]">while we open the first venues</p>
             <Link href="/signup" className="btn btn-chili mt-6 w-full">
-              Start free trial
+              Create a venue
             </Link>
           </div>
         </div>

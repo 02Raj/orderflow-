@@ -36,7 +36,7 @@ export default function LoginPage() {
       <BrandLink />
       <h1 className="display mt-8 text-4xl">Sign in</h1>
       <p className="mt-2 text-sm text-[var(--ink-soft)]">
-        Demo venue or your trial account. Works from any country.
+        Demo venue or your account. Works from any country.
       </p>
       <form onSubmit={onSubmit} method="post" action="/app" className="card mt-8 space-y-4 p-5">
         <label className="block text-sm font-medium">
@@ -69,7 +69,7 @@ export default function LoginPage() {
       <p className="mt-6 text-sm text-[var(--ink-soft)]">
         New restaurant?{" "}
         <Link href="/signup" className="underline">
-          Start a 45-day trial
+          Create a venue
         </Link>
       </p>
       <div className="mt-12">

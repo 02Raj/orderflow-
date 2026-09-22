@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/ui";
 import { api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { computeTotals, formatTaxRate, taxGuestHint } from "@/lib/tax";
+import { PAYMENTS_ENABLED } from "@/lib/payments";
 import { BillingStatus, Restaurant } from "@/lib/types";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -42,7 +43,9 @@ export default function SettingsPage() {
       setRestaurant(r);
       setRateInput((r.taxRateBp / 100).toString());
     });
-    api<BillingStatus>("/billing/status", { token }).then(setBilling);
+    if (PAYMENTS_ENABLED) {
+      api<BillingStatus>("/billing/status", { token }).then(setBilling);
+    }
     api<CountryPreset[]>("/auth/country-presets").then(setPresets).catch(() => undefined);
   }, []);
 
@@ -227,6 +230,7 @@ export default function SettingsPage() {
           <button className="btn btn-ink mt-4">Save</button>
           {saved ? <p className="mt-2 text-sm">Saved.</p> : null}
         </form>
+        {PAYMENTS_ENABLED ? (
         <aside className="card p-5">
           <h2 className="display text-2xl">Billing</h2>
           {billing ? (
@@ -248,6 +252,7 @@ export default function SettingsPage() {
             </>
           ) : null}
         </aside>
+        ) : null}
       </div>
     </AppShell>
   );
