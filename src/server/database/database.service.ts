@@ -5,7 +5,23 @@ export type QueryResult<T> = { rows: T[]; rowCount: number };
 
 interface Driver {
   query<T>(sql: string, params?: unknown[]): Promise<QueryResult<T>>;
+  transaction<T>(fn: (tx: QueryClient) => Promise<T>): Promise<T>;
   close(): Promise<void>;
+}
+
+export interface QueryClient {
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryResult<T>>;
+  one<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null>;
+}
+
+function client(query: Driver['query']): QueryClient {
+  return {
+    query,
+    async one<T>(sql: string, params: unknown[] = []) {
+      const result = await query<T>(sql, params);
+      return result.rows[0] ?? null;
+    },
+  };
 }
 
 /**
@@ -33,6 +49,23 @@ export class DatabaseService {
           const res = await pool.query(sql, params as never[]);
           return { rows: res.rows as T[], rowCount: res.rowCount ?? 0 };
         },
+        transaction: async <T>(fn: (tx: QueryClient) => Promise<T>) => {
+          const connection = await pool.connect();
+          try {
+            await connection.query('begin');
+            const result = await fn(client(async <R>(sql: string, params?: unknown[]) => {
+              const res = await connection.query(sql, params as never[]);
+              return { rows: res.rows as R[], rowCount: res.rowCount ?? 0 };
+            }));
+            await connection.query('commit');
+            return result;
+          } catch (error) {
+            await connection.query('rollback');
+            throw error;
+          } finally {
+            connection.release();
+          }
+        },
         close: () => pool.end(),
       };
       this.mode = 'postgres';
@@ -46,6 +79,11 @@ export class DatabaseService {
           const res = await db.query<T>(sql, params as never[]);
           return { rows: res.rows, rowCount: res.affectedRows ?? res.rows.length };
         },
+        transaction: <T>(fn: (tx: QueryClient) => Promise<T>) =>
+          db.transaction((tx) => fn(client(async <R>(sql: string, params?: unknown[]) => {
+            const res = await tx.query<R>(sql, params as never[]);
+            return { rows: res.rows, rowCount: res.affectedRows ?? res.rows.length };
+          }))),
         close: () => db.close(),
       };
       this.mode = 'pglite';
@@ -73,6 +111,10 @@ export class DatabaseService {
   async many<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
     const { rows } = await this.query<T>(sql, params);
     return rows;
+  }
+
+  transaction<T>(fn: (tx: QueryClient) => Promise<T>): Promise<T> {
+    return this.driver.transaction(fn);
   }
 
   private async migrate(): Promise<void> {

@@ -1,9 +1,41 @@
-import { API_BASE } from "@/lib/api";
+import { API_BASE, api } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { Order } from "@/lib/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const CLOSED = new Set(["served", "cancelled", "void"]);
+const POLL_MS = 5000;
+export const KITCHEN_ACK_SECONDS = 45;
+
+const STATUS_LABELS: Record<string, string> = {
+  new: "Waiting for kitchen",
+  accepted: "Accepted by kitchen",
+  preparing: "Preparing",
+  ready: "Ready to serve",
+  served: "Served",
+  cancelled: "Cancelled",
+  void: "Voided",
+};
+
+export function ticketStatusLabel(status: string) {
+  return STATUS_LABELS[status] ?? status;
+}
+
+export function isAwaitingKitchen(order: Order, now: number) {
+  return order.status === "new" && elapsedFrom(order.createdAt, now) >= KITCHEN_ACK_SECONDS;
+}
+
+export function syncIsStale(lastSyncAt: number | null, now: number) {
+  return lastSyncAt !== null && now - lastSyncAt >= 3 * POLL_MS;
+}
+
+function mergeTicket(orders: Order[], incoming: Order, activeOnly: boolean) {
+  const previous = orders.find((order) => order.id === incoming.id);
+  if (previous && Date.parse(previous.updatedAt) > Date.parse(incoming.updatedAt)) return orders;
+  const remaining = orders.filter((order) => order.id !== incoming.id);
+  if (!activeOnly || !CLOSED.has(incoming.status)) remaining.push(incoming);
+  return remaining.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
 
 export function elapsedFrom(createdAt: string, now = Date.now()) {
   return Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 1000));
@@ -22,7 +54,8 @@ export function useOrderStream(activeOnly = false) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [connected, setConnected] = useState(false);
   const [ready, setReady] = useState(false);
-  const known = useRef(new Set<string>());
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [syncFailed, setSyncFailed] = useState(false);
   const onCreated = useRef<((order: Order) => void) | null>(null);
 
   useEffect(() => {
@@ -30,40 +63,50 @@ export function useOrderStream(activeOnly = false) {
     if (!token) return;
     let cancelled = false;
     let source: EventSource | null = null;
-    let pollId: ReturnType<typeof setInterval> | null = null;
+    let reconnectId: number | undefined;
     let retry = 0;
+    let initialized = false;
+    let inFlight: AbortController | null = null;
+    const known = new Set<string>();
+    const duringLoad: Order[] = [];
 
     const path = activeOnly ? "/orders?active=1" : "/orders";
 
     const merge = (incoming: Order, type?: string) => {
-      if (type === "created" && !known.current.has(incoming.id)) {
+      if (type === "created" && !known.has(incoming.id)) {
         onCreated.current?.(incoming);
       }
-      known.current.add(incoming.id);
-      setOrders((prev) => {
-        const without = prev.filter((o) => o.id !== incoming.id);
-        if (activeOnly && CLOSED.has(incoming.status)) return without;
-        return [incoming, ...without].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        );
-      });
+      known.add(incoming.id);
+      if (inFlight) duringLoad.push(incoming);
+      setOrders((prev) => mergeTicket(prev, incoming, activeOnly));
     };
 
     const load = async () => {
-      const { api } = await import("@/lib/api");
-      const next = await api<Order[]>(path, { token });
-      if (cancelled) return;
-      known.current = new Set(next.map((o) => o.id));
-      setOrders(next);
-      setReady(true);
-    };
-
-    const startPoll = () => {
-      if (pollId) return;
-      setConnected(false);
-      pollId = setInterval(() => {
-        load().catch(() => undefined);
-      }, 2500);
+      if (cancelled || inFlight) return;
+      const controller = new AbortController();
+      inFlight = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 8000);
+      try {
+        const snapshot = await api<Order[]>(path, { token, signal: controller.signal });
+        if (cancelled) return;
+        // A live status change can arrive while the database snapshot is in flight.
+        const next = duringLoad.reduce((orders, order) => mergeTicket(orders, order, activeOnly), snapshot);
+        for (const order of next) {
+          if (initialized && order.status === "new" && !known.has(order.id)) onCreated.current?.(order);
+          known.add(order.id);
+        }
+        setOrders(next);
+        setReady(true);
+        setLastSyncAt(Date.now());
+        setSyncFailed(false);
+        initialized = true;
+      } catch {
+        if (!cancelled) setSyncFailed(true);
+      } finally {
+        window.clearTimeout(timeout);
+        duringLoad.length = 0;
+        inFlight = null;
+      }
     };
 
     const startSse = () => {
@@ -72,10 +115,7 @@ export function useOrderStream(activeOnly = false) {
       source.addEventListener("ready", () => {
         setConnected(true);
         retry = 0;
-        if (pollId) {
-          clearInterval(pollId);
-          pollId = null;
-        }
+        void load();
       });
       const handle = (type: string) => (ev: MessageEvent) => {
         try {
@@ -89,26 +129,28 @@ export function useOrderStream(activeOnly = false) {
       source.onerror = () => {
         source?.close();
         source = null;
+        if (cancelled) return;
         setConnected(false);
-        startPoll();
+        void load();
         const wait = Math.min(8000, 800 * 2 ** retry++);
-        window.setTimeout(() => {
+        reconnectId = window.setTimeout(() => {
           if (!cancelled) startSse();
         }, wait);
       };
     };
 
-    load()
-      .then(startSse)
-      .catch(() => {
-        setReady(true);
-        startPoll();
-      });
+    const pollId = window.setInterval(load, POLL_MS);
+    window.addEventListener("online", load);
+    void load();
+    startSse();
 
     return () => {
       cancelled = true;
       source?.close();
-      if (pollId) clearInterval(pollId);
+      inFlight?.abort();
+      window.clearTimeout(reconnectId);
+      window.clearInterval(pollId);
+      window.removeEventListener("online", load);
     };
   }, [activeOnly]);
 
@@ -121,6 +163,8 @@ export function useOrderStream(activeOnly = false) {
     setOrders,
     connected,
     ready,
+    lastSyncAt,
+    syncFailed,
     setOnCreated,
   };
 }

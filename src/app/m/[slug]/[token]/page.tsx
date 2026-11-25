@@ -1,6 +1,6 @@
 "use client";
 
-import { api, formatMoney } from "@/lib/api";
+import { ApiError, api, formatMoney } from "@/lib/api";
 import { computeTotals, taxGuestHint } from "@/lib/tax";
 import { MenuCategory, MenuItem, Order } from "@/lib/types";
 import { useParams } from "next/navigation";
@@ -17,6 +17,7 @@ interface VenuePayload {
   };
   table: { id: string; number: number; label: string | null };
   orderingEnabled: boolean;
+  orderingMessage?: string;
   menu: { categories: MenuCategory[]; items: MenuItem[] };
 }
 
@@ -31,6 +32,14 @@ interface CartLine {
   modifierNames: string[];
 }
 
+interface PendingAttempt {
+  clientRef: string;
+  customerName?: string;
+  note?: string;
+  lines: { menuItemId: string; quantity: number; note?: string; modifierIds: string[] }[];
+  cart: CartLine[];
+}
+
 export default function GuestMenuPage() {
   const params = useParams<{ slug: string; token: string }>();
   const [data, setData] = useState<VenuePayload | null>(null);
@@ -41,12 +50,54 @@ export default function GuestMenuPage() {
   const [placed, setPlaced] = useState<Order | null>(null);
   const [busy, setBusy] = useState(false);
   const [pop, setPop] = useState(false);
+  const [attempt, setAttempt] = useState<PendingAttempt | null>(null);
+  const [trackingError, setTrackingError] = useState(false);
+  const pendingKey = `orderflow:pending:${params.slug}:${params.token}`;
+  const placedKey = `orderflow:placed:${params.slug}:${params.token}`;
 
   useEffect(() => {
     api<VenuePayload>(`/public/venues/${params.slug}/tables/${params.token}`)
       .then(setData)
       .catch((err) => setError(err instanceof Error ? err.message : "Menu unavailable"));
   }, [params.slug, params.token]);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem(pendingKey);
+    if (saved) {
+      try {
+        const pending = JSON.parse(saved) as PendingAttempt;
+        setAttempt(pending);
+        setCart(pending.cart);
+        setName(pending.customerName ?? "");
+        setNote(pending.note ?? "");
+        return;
+      } catch { sessionStorage.removeItem(pendingKey); }
+    }
+    const lastOrderId = sessionStorage.getItem(placedKey);
+    if (lastOrderId) {
+      api<Order>(`/public/venues/${params.slug}/tables/${params.token}/orders/${lastOrderId}`)
+        .then(setPlaced)
+        .catch(() => sessionStorage.removeItem(placedKey));
+    }
+  }, [pendingKey, placedKey, params.slug, params.token]);
+
+  useEffect(() => {
+    if (!placed) return;
+    const refresh = () => {
+      api<Order>(`/public/venues/${params.slug}/tables/${params.token}/orders/${placed.id}`)
+        .then((order) => { setPlaced(order); setTrackingError(false); })
+        .catch(() => setTrackingError(true));
+    };
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [placed?.id, params.slug, params.token]);
+
+  function clearAttempt() {
+    if (attempt) {
+      setAttempt(null);
+      sessionStorage.removeItem(pendingKey);
+    }
+  }
 
   const lineGross = useMemo(
     () => cart.reduce((sum, line) => sum + line.unitPriceMinor * line.quantity, 0),
@@ -61,13 +112,14 @@ export default function GuestMenuPage() {
   }, [data, lineGross]);
 
   function addItem(item: MenuItem, modifierIds: string[]) {
+    if (attempt) return;
     const mods = item.modifiers.filter((m) => modifierIds.includes(m.id));
     const unit = item.priceMinor + mods.reduce((sum, m) => sum + m.priceAdjustmentMinor, 0);
     const key = `${item.id}:${modifierIds.slice().sort().join(",")}`;
     setCart((prev) => {
       const existing = prev.find((l) => l.key === key);
       if (existing) {
-        return prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + 1 } : l));
+        return prev.map((l) => (l.key === key ? { ...l, quantity: Math.min(99, l.quantity + 1) } : l));
       }
       return [
         ...prev,
@@ -87,32 +139,53 @@ export default function GuestMenuPage() {
     window.setTimeout(() => setPop(false), 280);
   }
 
+  function changeQuantity(key: string, delta: number) {
+    if (attempt) return;
+    setCart((current) => current
+      .map((line) => line.key === key ? { ...line, quantity: line.quantity + delta } : line)
+      .filter((line) => line.quantity > 0));
+  }
+
   async function place() {
     if (!cart.length) return;
     setBusy(true);
     setError("");
     try {
+      const request: PendingAttempt = attempt ?? {
+        clientRef: crypto.randomUUID(),
+        customerName: name || undefined,
+        note: note || undefined,
+        lines: cart.map((line) => ({
+          menuItemId: line.menuItemId,
+          quantity: line.quantity,
+          note: line.note || undefined,
+          modifierIds: line.modifierIds,
+        })),
+        cart,
+      };
+      setAttempt(request);
+      sessionStorage.setItem(pendingKey, JSON.stringify(request));
       const order = await api<Order>(
         `/public/venues/${params.slug}/tables/${params.token}/orders`,
         {
           method: "POST",
-          json: {
-            clientRef: crypto.randomUUID(),
-            customerName: name || undefined,
-            note: note || undefined,
-            lines: cart.map((line) => ({
-              menuItemId: line.menuItemId,
-              quantity: line.quantity,
-              note: line.note || undefined,
-              modifierIds: line.modifierIds,
-            })),
-          },
+          json: request,
         },
       );
+      sessionStorage.removeItem(pendingKey);
+      sessionStorage.setItem(placedKey, order.id);
+      setAttempt(null);
       setPlaced(order);
       setCart([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send the ticket");
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+        clearAttempt();
+        sessionStorage.removeItem(pendingKey);
+        setAttempt(null);
+        setError(err.message);
+      } else {
+        setError(`${err instanceof Error ? err.message : "Could not confirm the ticket"}. Retry checks the same order, so it will not send a duplicate.`);
+      }
     } finally {
       setBusy(false);
     }
@@ -139,24 +212,30 @@ export default function GuestMenuPage() {
   }
 
   if (placed) {
+    const steps = ["new", "accepted", "preparing", "ready", "served"];
+    const step = steps.indexOf(placed.status);
     return (
       <main className="mx-auto max-w-md px-5 py-16 text-center">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--chili)]">
-          Ticket sent
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--chili)]" role="status">
+          {placed.status === "cancelled" ? "Ticket cancelled" :
+            step < 1 ? "Sent · Waiting for kitchen" : step < 3 ? "Kitchen is preparing" : step === 3 ? "Ready" : "Served"}
         </p>
         <h1 className="display mt-3 text-4xl">#{placed.orderNumber}</h1>
         <ol className="mx-auto mt-8 flex max-w-xs justify-between text-[11px] font-medium text-[var(--ink-soft)]">
-          {["Sent", "Kitchen", "Ready"].map((step, i) => (
-            <li key={step} className={i === 0 ? "text-[var(--chili)]" : ""}>
+          {["Sent", "Kitchen", "Ready"].map((label, i) => (
+            <li key={label} className={step >= (i === 0 ? 0 : i === 1 ? 1 : 3) ? "text-[var(--chili)]" : ""}>
               <span className="mx-auto mb-1 block h-2 w-2 rounded-full bg-current" />
-              {step}
+              {label}
             </li>
           ))}
         </ol>
         <p className="mt-6 text-[var(--ink-soft)]">
-          Table {data.table.number}. Pay at the table as usual.
+          {placed.status === "cancelled"
+            ? placed.rejectionReason || "Please speak to a team member about this order."
+            : `Table ${data.table.number}. Pay at the table as usual.`}
         </p>
-        <button className="btn btn-ghost mt-8" onClick={() => setPlaced(null)}>
+        {trackingError ? <p className="mt-3 text-sm text-[var(--chili)]">Status is temporarily unavailable. Your order number is saved here.</p> : null}
+        <button className="btn btn-ghost mt-8" onClick={() => { sessionStorage.removeItem(placedKey); setPlaced(null); }}>
           Order something else
         </button>
       </main>
@@ -184,7 +263,7 @@ export default function GuestMenuPage() {
         </p>
         {!data.orderingEnabled ? (
           <p className="mt-3 rounded-xl bg-[#f3d0c8] px-3 py-2 text-sm">
-            This venue is not taking digital orders right now.
+            {data.orderingMessage ?? "This venue is not taking digital orders right now."}
           </p>
         ) : null}
       </header>
@@ -203,7 +282,7 @@ export default function GuestMenuPage() {
                   currency={data.restaurant.currency}
                   locale={data.restaurant.locale}
                   taxInclusive={data.restaurant.taxInclusive}
-                  disabled={!data.orderingEnabled}
+                  disabled={!data.orderingEnabled || !!attempt}
                   onAdd={addItem}
                 />
               ))}
@@ -220,11 +299,14 @@ export default function GuestMenuPage() {
         >
           <div className="mx-auto max-w-lg">
             {cart.map((line) => (
-              <div key={line.key} className="flex justify-between text-sm">
-                <span>
-                  {line.quantity}× {line.name}
-                  {line.modifierNames.length ? ` (${line.modifierNames.join(", ")})` : ""}
-                </span>
+              <div key={line.key} className="flex items-center justify-between gap-2 py-1 text-sm">
+                <span className="flex-1">{line.name}
+                  {line.modifierNames.length ? ` (${line.modifierNames.join(", ")})` : ""}</span>
+                <button type="button" className="rounded-lg border border-[var(--rule)] px-2 py-1" disabled={!!attempt}
+                  aria-label={`Remove one ${line.name}`} onClick={() => changeQuantity(line.key, -1)}>−</button>
+                <span>{line.quantity}</span>
+                <button type="button" className="rounded-lg border border-[var(--rule)] px-2 py-1" disabled={!!attempt || line.quantity >= 99}
+                  aria-label={`Add one ${line.name}`} onClick={() => changeQuantity(line.key, 1)}>+</button>
                 <span>
                   {formatMoney(
                     line.unitPriceMinor * line.quantity,
@@ -268,15 +350,17 @@ export default function GuestMenuPage() {
               className="field mt-3"
               placeholder="Your name (optional)"
               value={name}
+              disabled={!!attempt}
               onChange={(e) => setName(e.target.value)}
             />
             <input
               className="field mt-2"
               placeholder="Allergies or notes for the kitchen"
               value={note}
+              disabled={!!attempt}
               onChange={(e) => setNote(e.target.value)}
             />
-            {error ? <p className="mt-2 text-sm text-[var(--chili)]">{error}</p> : null}
+            {error ? <p className="mt-2 text-sm text-[var(--chili)]" role="alert">{error}</p> : null}
             <button
               disabled={busy || !data.orderingEnabled}
               onClick={place}
@@ -284,7 +368,7 @@ export default function GuestMenuPage() {
             >
               {busy
                 ? "Sending…"
-                : `Send ticket · ${formatMoney(
+                : `${attempt ? "Retry same ticket" : "Send ticket"} · ${formatMoney(
                     totals?.totalMinor ?? lineGross,
                     data.restaurant.currency,
                     data.restaurant.locale,

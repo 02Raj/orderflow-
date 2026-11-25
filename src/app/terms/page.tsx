@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — OrderFlow",
+  title: "Terms of Service — OrderNFlow",
 };
 
 export default function TermsPage() {
@@ -12,13 +12,13 @@ export default function TermsPage() {
     <LegalLayout kicker="Legal" title="Terms of Service" updated="19 September 2026">
       <p>
         These terms are the contract between you (the restaurant / venue) and the operator of
-        OrderFlow. They are a working baseline for an independent SaaS, not a substitute for
+        OrderNFlow. They are a working baseline for an independent SaaS, not a substitute for
         counsel in your country.
       </p>
 
       <h2 className="display pt-4 text-2xl">The service</h2>
       <p>
-        OrderFlow provides QR guest menus, kitchen tickets, staff logins, menu and table tools, and
+        OrderNFlow provides QR guest menus, kitchen tickets, staff logins, menu and table tools, and
         reports in a web browser. We do not take guest card payments. You keep collecting payment
         the way you already do. Tax figures on tickets are display helpers; you remain responsible
         for tax filing.
@@ -33,14 +33,14 @@ export default function TermsPage() {
 
       <h2 className="display pt-4 text-2xl">Acceptable use</h2>
       <p>
-        Do not attack the service, scrape other venues, send malware, or use OrderFlow for anything
+        Do not attack the service, scrape other venues, send malware, or use OrderNFlow for anything
         illegal. Do not put children’s data or unnecessary health records into tickets. Allergy
         notes should be only what the kitchen needs for that plate.
       </p>
 
       <h2 className="display pt-4 text-2xl">Trial and fees</h2>
       <p>
-        Paid subscriptions are not turned on yet. Venues can use OrderFlow without a card. If we
+        Paid subscriptions are not turned on yet. Venues can use OrderNFlow without a card. If we
         start charging later, the price will be shown on the site before anyone is billed, and we
         will not silently add hardware or payment lock-in.
       </p>
@@ -69,7 +69,7 @@ export default function TermsPage() {
 
       <h2 className="display pt-4 text-2xl">Liability</h2>
       <p>
-        To the extent allowed by law, OrderFlow is provided “as is.” We are not liable for lost
+        To the extent allowed by law, OrderNFlow is provided “as is.” We are not liable for lost
         covers, food waste, or tax mistakes beyond what mandatory law forbids us from limiting. Our
         aggregate liability in a year is capped at the fees you paid us in the three months before
         the claim. Nothing here limits liability for fraud or death/personal injury caused by

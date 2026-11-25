@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { RestaurantsService } from '../restaurants/restaurants.service';
+import { isOrderingOpen, RestaurantsService } from '../restaurants/restaurants.service';
 import { AuthenticatedUser, OrderStatus } from '../common/types';
 import { computeTotals } from '../common/money';
 
@@ -21,6 +21,7 @@ export interface GuestOrderInput {
   customerLabel?: string | null;
   note?: string | null;
   lines: CreateOrderLine[];
+  channel?: 'qr' | 'staff';
 }
 
 export class OrdersService {
@@ -36,6 +37,7 @@ export class OrdersService {
 
   async createGuestOrder(input: GuestOrderInput) {
     if (!input.lines?.length) throw new BadRequestException('Add at least one item');
+    if (!input.clientRef || input.clientRef.length > 120) throw new BadRequestException('Invalid order reference');
 
     const existing = await this.db.one<{ id: string }>(
       'select id from orders where restaurant_id = $1 and client_ref = $2',
@@ -50,7 +52,17 @@ export class OrdersService {
     if (!table) throw new BadRequestException('That table is not taking orders');
 
     const restaurant = await this.restaurants.findById(input.restaurantId);
-    const resolvedLines = [];
+    if (input.channel !== 'staff' && !isOrderingOpen(restaurant)) {
+      throw new BadRequestException('This venue is not taking QR orders right now');
+    }
+    const resolvedLines: Array<{
+      menuItemId: string;
+      name: string;
+      unitPriceMinor: number;
+      quantity: number;
+      note: string | null;
+      modifiers: Array<{ id: string; name: string; price_adjustment_minor: number }>;
+    }> = [];
     let gross = 0;
 
     for (const line of input.lines) {
@@ -76,7 +88,10 @@ export class OrdersService {
           )
         : [];
 
-      const quantity = Math.max(1, Math.round(line.quantity));
+      if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) {
+        throw new BadRequestException('Quantity must be between 1 and 99');
+      }
+      const quantity = line.quantity;
       const unit = item.price_minor + modifiers.reduce((sum, m) => sum + m.price_adjustment_minor, 0);
       gross += unit * quantity;
       resolvedLines.push({
@@ -95,20 +110,34 @@ export class OrdersService {
     });
     const createdAt = new Date();
     const businessDate = businessDateFor(createdAt, restaurant.timezone);
-    const orderNumber = await this.nextOrderNumber(input.restaurantId, businessDate);
     const orderId = randomUUID();
-
-    await this.db.query(
+    try {
+      await this.db.transaction(async (tx) => {
+        const duplicate = await tx.one<{ id: string }>(
+          'select id from orders where restaurant_id = $1 and client_ref = $2',
+          [input.restaurantId, input.clientRef],
+        );
+        if (duplicate) return;
+        const counter = await tx.one<{ last_number: number }>(
+          `insert into order_counters (restaurant_id, business_date, last_number)
+           values ($1, $2, (select coalesce(max(order_number), 0) + 1 from orders where restaurant_id = $1 and business_date = $2))
+           on conflict (restaurant_id, business_date) do update
+           set last_number = order_counters.last_number + 1
+           returning last_number`,
+          [input.restaurantId, businessDate],
+        );
+        await tx.query(
       `insert into orders (id, restaurant_id, table_id, order_number, business_date, channel, status,
                            customer_label, subtotal_minor, tax_minor, total_minor, paid_minor,
                            note, client_ref, created_at)
-       values ($1, $2, $3, $4, $5, 'qr', 'new', $6, $7, $8, $9, 0, $10, $11, $12)`,
+       values ($1, $2, $3, $4, $5, $6, 'new', $7, $8, $9, $10, 0, $11, $12, $13)`,
       [
         orderId,
         input.restaurantId,
         input.tableId,
-        orderNumber,
+        counter!.last_number,
         businessDate,
+        input.channel ?? 'qr',
         input.customerLabel?.trim() || `Table ${table.table_number}`,
         totals.subtotalMinor,
         totals.taxMinor,
@@ -117,11 +146,11 @@ export class OrdersService {
         input.clientRef,
         createdAt.toISOString(),
       ],
-    );
+        );
 
-    for (const line of resolvedLines) {
+        for (const line of resolvedLines) {
       const orderItemId = randomUUID();
-      await this.db.query(
+      await tx.query(
         `insert into order_items (id, order_id, restaurant_id, menu_item_id, name_snapshot,
                                   unit_price_minor, quantity, line_total_minor, note, status)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
@@ -138,13 +167,28 @@ export class OrdersService {
         ],
       );
       for (const modifier of line.modifiers) {
-        await this.db.query(
+        await tx.query(
           `insert into order_item_modifiers (id, order_item_id, modifier_name, price_adjustment_minor)
            values ($1, $2, $3, $4)`,
           [randomUUID(), orderItemId, modifier.name, modifier.price_adjustment_minor],
         );
       }
+        }
+      });
+    } catch (error) {
+      const duplicate = await this.db.one<{ id: string }>(
+        'select id from orders where restaurant_id = $1 and client_ref = $2',
+        [input.restaurantId, input.clientRef],
+      );
+      if (duplicate) return this.findById(input.restaurantId, duplicate.id);
+      throw error;
     }
+
+    const committed = await this.db.one<{ id: string }>(
+      'select id from orders where restaurant_id = $1 and client_ref = $2',
+      [input.restaurantId, input.clientRef],
+    );
+    if (committed?.id !== orderId) return this.findById(input.restaurantId, committed!.id);
 
     const saved = await this.findById(input.restaurantId, orderId);
     this.events.emit(`orders:${input.restaurantId}`, { type: 'created', order: saved });
@@ -152,7 +196,7 @@ export class OrdersService {
   }
 
   async createStaffOrder(user: AuthenticatedUser, input: GuestOrderInput & { tableId: string }) {
-    return this.createGuestOrder({ ...input, restaurantId: user.restaurantId });
+    return this.createGuestOrder({ ...input, restaurantId: user.restaurantId, channel: 'staff' });
   }
 
   async setStatus(user: AuthenticatedUser, orderId: string, status: OrderStatus, reason?: string) {
@@ -175,7 +219,7 @@ export class OrdersService {
                 ? 'voided_at'
                 : null;
 
-    await this.db.query(
+    const updated = await this.db.query(
       `update orders
        set status = $1,
            updated_at = now(),
@@ -183,9 +227,13 @@ export class OrdersService {
            void_reason = case when $1 = 'cancelled' then $2 else void_reason end
            ${stamp ? `, ${stamp} = now()` : ''}
            ${status === 'served' || status === 'cancelled' ? ', closed_at = now()' : ''}
-       where id = $3 and restaurant_id = $4`,
-      [status, reason ?? null, orderId, user.restaurantId],
+       where id = $3 and restaurant_id = $4 and status = $5
+       returning id`,
+      [status, reason ?? null, orderId, user.restaurantId, order.status],
     );
+    if (!updated.rows.length) {
+      throw new BadRequestException('Ticket status changed. Check the latest status and try again.');
+    }
 
     await this.audit.record({
       restaurantId: user.restaurantId,
@@ -286,10 +334,15 @@ export class OrdersService {
       values.push(filter.businessDate);
       conditions.push(`o.business_date = $${values.length}`);
     }
-    values.push(Math.min(filter.limit ?? 80, 200));
+    let limit = '';
+    // Service boards need every open ticket. Cap only history queries.
+    if (!filter.activeOnly) {
+      values.push(Math.min(filter.limit ?? 80, 200));
+      limit = ` limit $${values.length}`;
+    }
 
     const orders = await this.db.many<OrderRow>(
-      `${ORDER_SELECT} where ${conditions.join(' and ')} order by o.created_at desc limit $${values.length}`,
+      `${ORDER_SELECT} where ${conditions.join(' and ')} order by o.created_at desc${limit}`,
       values,
     );
     if (!orders.length) return [];
@@ -322,14 +375,6 @@ export class OrdersService {
     return businessDateFor(new Date(), restaurant.timezone);
   }
 
-  private async nextOrderNumber(restaurantId: string, businessDate: string): Promise<number> {
-    const row = await this.db.one<{ next: number }>(
-      `select coalesce(max(order_number), 0) + 1 as next from orders
-       where restaurant_id = $1 and business_date = $2`,
-      [restaurantId, businessDate],
-    );
-    return Number(row?.next ?? 1);
-  }
 }
 
 function allowedItemTransitions(from: string): Array<'pending' | 'preparing' | 'ready'> {
@@ -372,8 +417,10 @@ interface OrderRow {
   taxMinor: number;
   totalMinor: number;
   note: string | null;
+  rejectionReason: string | null;
   clientRef: string;
   createdAt: string;
+  updatedAt: string;
   elapsedSeconds: number;
 }
 
@@ -402,8 +449,10 @@ const ORDER_SELECT = `
          o.tax_minor as "taxMinor",
          o.total_minor as "totalMinor",
          o.note,
+         o.rejection_reason as "rejectionReason",
          o.client_ref as "clientRef",
          o.created_at as "createdAt",
+         o.updated_at as "updatedAt",
          extract(epoch from (now() - o.created_at))::int as "elapsedSeconds"
   from orders o
   left join dining_tables t on t.id = o.table_id`;

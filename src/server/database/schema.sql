@@ -19,6 +19,9 @@ create table if not exists restaurants (
   address text,
   receipt_header text,
   receipt_footer text,
+  ordering_paused boolean not null default false,
+  opening_time text,
+  closing_time text,
   created_at timestamptz not null default now()
 );
 
@@ -53,6 +56,7 @@ create table if not exists dining_tables (
   restaurant_id uuid not null references restaurants (id) on delete cascade,
   table_number integer not null,
   label text,
+  area text,
   qr_token text not null unique,
   is_active boolean not null default true,
   created_at timestamptz not null default now()
@@ -129,6 +133,13 @@ create unique index if not exists orders_client_ref_idx on orders (restaurant_id
 create unique index if not exists orders_number_idx on orders (restaurant_id, business_date, order_number);
 create index if not exists orders_restaurant_status_idx on orders (restaurant_id, status);
 
+create table if not exists order_counters (
+  restaurant_id uuid not null references restaurants (id) on delete cascade,
+  business_date date not null,
+  last_number integer not null,
+  primary key (restaurant_id, business_date)
+);
+
 create table if not exists order_items (
   id uuid primary key,
   order_id uuid not null references orders (id) on delete cascade,
@@ -176,6 +187,7 @@ create table if not exists audit_logs (
 create index if not exists audit_logs_restaurant_idx on audit_logs (restaurant_id, created_at);
 
 -- Patches for databases created from the earlier counter-POS schema.
+alter table dining_tables add column if not exists area text;
 alter table restaurants add column if not exists slug text;
 alter table restaurants add column if not exists phone text;
 alter table restaurants add column if not exists address text;
@@ -186,6 +198,9 @@ alter table orders add column if not exists preparing_at timestamptz;
 alter table orders add column if not exists ready_at timestamptz;
 alter table orders add column if not exists served_at timestamptz;
 alter table restaurants add column if not exists tax_region text;
+alter table restaurants add column if not exists ordering_paused boolean not null default false;
+alter table restaurants add column if not exists opening_time text;
+alter table restaurants add column if not exists closing_time text;
 alter table menu_items add column if not exists description text;
 alter table menu_items add column if not exists image_url text;
 alter table order_items add column if not exists status text;

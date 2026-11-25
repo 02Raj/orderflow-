@@ -4,8 +4,8 @@ import { AppShell } from "@/components/app-shell";
 import { formatElapsed } from "@/lib/api";
 import { getToken, getUser, SessionUser } from "@/lib/session";
 import { Order, OrderItem } from "@/lib/types";
-import { elapsedFrom, useNow, useOrderStream } from "@/lib/use-order-stream";
-import { useEffect, useState } from "react";
+import { KITCHEN_ACK_SECONDS, elapsedFrom, isAwaitingKitchen, syncIsStale, useNow, useOrderStream } from "@/lib/use-order-stream";
+import { useEffect, useRef, useState } from "react";
 
 const NEXT: Record<string, { label: string; status: string } | undefined> = {
   new: { label: "Accept", status: "accepted" },
@@ -29,8 +29,27 @@ function urgencyClass(seconds: number, status: string) {
 export default function KitchenPage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [actionError, setActionError] = useState("");
   const now = useNow();
-  const { orders, connected, ready, setOnCreated } = useOrderStream(true);
+  const { orders, connected, ready, lastSyncAt, syncFailed, setOnCreated } = useOrderStream(true);
+  const stale = syncIsStale(lastSyncAt, now) || (syncFailed && !ready);
+  const pending = orders.filter((order) => isAwaitingKitchen(order, now));
+  const ordersRef = useRef(orders);
+  const lastAlarm = useRef(0);
+
+  useEffect(() => { ordersRef.current = orders; }, [orders]);
+
+  useEffect(() => {
+    if (!audioUnlocked || stale) return;
+    const id = window.setInterval(() => {
+      const time = Date.now();
+      if (ordersRef.current.some((order) => isAwaitingKitchen(order, time)) && time - lastAlarm.current >= 30000) {
+        beep();
+        lastAlarm.current = Date.now();
+      }
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [audioUnlocked, stale]);
 
   useEffect(() => {
     setUser(getUser());
@@ -47,11 +66,16 @@ export default function KitchenPage() {
     const step = NEXT[order.status];
     if (!token || !step) return;
     const { api } = await import("@/lib/api");
-    await api(`/orders/${order.id}/status`, {
-      method: "PATCH",
-      token,
-      json: { status: step.status },
-    });
+    setActionError("");
+    try {
+      await api(`/orders/${order.id}/status`, {
+        method: "PATCH",
+        token,
+        json: { status: step.status },
+      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not update the ticket. Check its status and retry.");
+    }
   }
 
   async function bumpItem(order: Order, item: OrderItem) {
@@ -71,9 +95,9 @@ export default function KitchenPage() {
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[#c9b89a]">
-            Kitchen display · {connected ? "live" : "reconnecting"}
+            Kitchen display · {stale ? "sync delayed" : connected ? "live" : "syncing"}
           </p>
-          <h1 className="display text-3xl md:text-4xl">{orders.length} live tickets</h1>
+          <h1 className="display text-3xl md:text-4xl">{ready ? `${orders.length} open tickets` : "Kitchen tickets"}</h1>
         </div>
         <button
           className="rounded-xl border border-[#c9b89a] px-3 py-2 text-xs uppercase tracking-widest"
@@ -82,6 +106,17 @@ export default function KitchenPage() {
           {audioUnlocked ? "Sound on" : "Enable ticket chime"}
         </button>
       </header>
+      {actionError ? <p role="alert" className="mb-5 rounded-xl bg-[#f3d0c8] p-4 text-[var(--ink)]">{actionError}</p> : null}
+      {stale ? (
+        <p role="alert" className="mb-5 rounded-xl bg-[#fff4d6] p-4 text-[var(--ink)]">
+          Ticket sync is delayed. Check with the floor for new orders while the board reconnects.
+        </p>
+      ) : pending.length > 0 ? (
+        <div role="alert" className="mb-5 rounded-xl bg-[#f3d0c8] p-4 font-semibold text-[var(--ink)]">
+          {pending.length} ticket{pending.length === 1 ? "" : "s"} waiting at least {KITCHEN_ACK_SECONDS} seconds for kitchen acceptance.
+          Check the new tickets below.
+        </div>
+      ) : null}
       {!ready ? (
         <p className="text-sm text-[#c9b89a]">Connecting to the ticket stream…</p>
       ) : orders.length === 0 ? (

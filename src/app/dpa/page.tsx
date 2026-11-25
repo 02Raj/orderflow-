@@ -3,29 +3,29 @@ import { MAIL } from "@/lib/site";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Data Processing Addendum — OrderFlow",
+  title: "Data Processing Addendum — OrderNFlow",
 };
 
 export default function DpaPage() {
   return (
     <LegalLayout kicker="Legal" title="Data Processing Addendum" updated="19 September 2026">
       <p>
-        This DPA is how GDPR-style processor rules attach to OrderFlow when you (the restaurant)
+        This DPA is how GDPR-style processor rules attach to OrderNFlow when you (the restaurant)
         are the controller of guest and staff-on-shift data. Using the service includes this
         addendum. Have your lawyer review it before you rely on it in an enterprise deal.
       </p>
 
       <h2 className="display pt-4 text-2xl">Roles</h2>
       <p>
-        You are the controller. OrderFlow is the processor for: guest QR orders, table tokens,
-        tickets, kitchen status, and staff accounts you create to run service. OrderFlow is an
+        You are the controller. OrderNFlow is the processor for: guest QR orders, table tokens,
+        tickets, kitchen status, and staff accounts you create to run service. OrderNFlow is an
         independent controller for our own billing, security of the platform, and the marketing
         site.
       </p>
 
       <h2 className="display pt-4 text-2xl">Instructions</h2>
       <p>
-        We process only to provide OrderFlow: store the ticket, stream it to kitchen and floor,
+        We process only to provide OrderNFlow: store the ticket, stream it to kitchen and floor,
         show reports, and let you edit the menu. We will not use guest orders to train public AI
         models or to advertise. If law forces us to process another way, we tell you unless the law
         forbids it.

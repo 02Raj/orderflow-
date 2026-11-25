@@ -7,7 +7,7 @@ export function BrandMark({ size = 36 }: { size?: number }) {
       style={{ width: size, height: size, fontSize: size * 0.36, fontWeight: 700 }}
       aria-hidden
     >
-      OF
+      ONF
     </span>
   );
 }
@@ -16,7 +16,7 @@ export function BrandLink() {
   return (
     <Link href="/" className="flex items-center gap-2 text-[var(--ink)]">
       <BrandMark />
-      <strong className="tracking-tight">OrderFlow</strong>
+      <strong className="tracking-tight">OrderNFlow</strong>
     </Link>
   );
 }

@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Security — OrderFlow",
+  title: "Security — OrderNFlow",
 };
 
 export default function SecurityPage() {
@@ -12,7 +12,7 @@ export default function SecurityPage() {
     <LegalLayout kicker="Trust" title="Security" updated="19 September 2026">
       <p>
         Independent owners do not trust a kitchen tool they cannot explain to a health inspector
-        or a bank. This page states what OrderFlow actually does today — not a SOC 2 badge we have
+        or a bank. This page states what OrderNFlow actually does today — not a SOC 2 badge we have
         not earned.
       </p>
 

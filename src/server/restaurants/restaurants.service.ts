@@ -1,4 +1,4 @@
-import { NotFoundException } from '../errors';
+import { BadRequestException, NotFoundException } from '../errors';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../common/types';
@@ -19,6 +19,9 @@ export interface Restaurant {
   taxNumber: string | null;
   phone: string | null;
   address: string | null;
+  orderingPaused: boolean;
+  openingTime: string | null;
+  closingTime: string | null;
 }
 
 const SELECT = `
@@ -35,7 +38,10 @@ const SELECT = `
          tax_region as "taxRegion",
          tax_number as "taxNumber",
          phone,
-         address
+         address,
+         ordering_paused as "orderingPaused",
+         opening_time as "openingTime",
+         closing_time as "closingTime"
   from restaurants`;
 
 export class RestaurantsService {
@@ -73,6 +79,9 @@ export class RestaurantsService {
       taxNumber: 'tax_number',
       phone: 'phone',
       address: 'address',
+      orderingPaused: 'ordering_paused',
+      openingTime: 'opening_time',
+      closingTime: 'closing_time',
     };
 
     const updates: string[] = [];
@@ -80,6 +89,10 @@ export class RestaurantsService {
     for (const [key, value] of Object.entries(patch)) {
       const column = columns[key];
       if (!column || value === undefined) continue;
+      if ((key === 'openingTime' || key === 'closingTime') && value !== null &&
+          (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+        throw new BadRequestException('Opening and closing times must use HH:mm');
+      }
       values.push(value);
       updates.push(`${column} = $${values.length}`);
     }
@@ -102,4 +115,19 @@ export class RestaurantsService {
 
     return this.findById(user.restaurantId);
   }
+}
+
+export function isOrderingOpen(restaurant: Pick<Restaurant, 'orderingPaused' | 'openingTime' | 'closingTime' | 'timezone'>, now = new Date()): boolean {
+  if (restaurant.orderingPaused) return false;
+  if (!restaurant.openingTime || !restaurant.closingTime) return true;
+  const localTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: restaurant.timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(now);
+  const open = restaurant.openingTime;
+  const close = restaurant.closingTime;
+  if (open === close) return true;
+  return open < close ? localTime >= open && localTime < close : localTime >= open || localTime < close;
 }

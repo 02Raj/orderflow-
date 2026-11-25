@@ -7,7 +7,7 @@ import { assertWritableSubscription } from './subscription';
 import { PAYMENTS_ENABLED } from '../lib/payments';
 import { getServices } from './services';
 import type { AuthenticatedUser, OrderStatus } from './common/types';
-import type { Restaurant } from './restaurants/restaurants.service';
+import { isOrderingOpen, type Restaurant } from './restaurants/restaurants.service';
 
 const PUBLIC_PATHS = new Set([
   'GET /health',
@@ -175,6 +175,27 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
       return json(await svc.restaurants.update(user!, body as Partial<Restaurant>));
     }
 
+    if (method === 'PATCH' && path === '/restaurant/ordering') {
+      assertRole(user!, 'manager');
+      const body = await readJson<{
+        orderingPaused?: boolean;
+        openingTime?: string | null;
+        closingTime?: string | null;
+      }>(request);
+      if (body.orderingPaused !== undefined && typeof body.orderingPaused !== 'boolean') {
+        throw new BadRequestException('Invalid pause setting');
+      }
+      if ((body.openingTime === null) !== (body.closingTime === null) ||
+          (!!body.openingTime !== !!body.closingTime)) {
+        throw new BadRequestException('Set both opening and closing times, or leave both empty');
+      }
+      return json(await svc.restaurants.update(user!, {
+        orderingPaused: body.orderingPaused,
+        openingTime: body.openingTime,
+        closingTime: body.closingTime,
+      }));
+    }
+
     if (method === 'GET' && path === '/restaurant/activity') {
       assertRole(user!, 'manager');
       return json(await svc.audit.list(user!.restaurantId));
@@ -243,8 +264,7 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
 
     if (method === 'POST' && path === '/tables') {
       assertRole(user!, 'manager');
-      const body = await readJson<{ tableNumber: number; label?: string }>(request);
-      return json(await svc.tables.create(user!, body));
+      return json(await svc.tables.create(user!, await readJson<unknown>(request)));
     }
 
     const rotate = match(path, '/tables/:id/rotate');
@@ -256,8 +276,7 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
     const tableId = match(path, '/tables/:id');
     if (method === 'PATCH' && tableId) {
       assertRole(user!, 'manager');
-      const body = await readJson<{ label?: string | null; isActive?: boolean; tableNumber?: number }>(request);
-      return json(await svc.tables.update(user!, tableId.id, body));
+      return json(await svc.tables.update(user!, tableId.id, await readJson<unknown>(request)));
     }
 
     if (method === 'GET' && path === '/orders/stream') {
@@ -334,7 +353,12 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
           number: table.tableNumber,
           label: table.label,
         },
-        orderingEnabled: !billing.accessBlocked,
+        orderingEnabled: !billing.accessBlocked && isOrderingOpen(restaurant),
+        orderingMessage: billing.accessBlocked
+          ? 'Digital ordering is unavailable right now.'
+          : restaurant.orderingPaused
+            ? 'The venue has paused QR ordering. Please order with a team member.'
+            : 'QR ordering is closed right now. Please order with a team member.',
         menu,
       });
     }

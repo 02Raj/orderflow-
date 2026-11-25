@@ -28,7 +28,7 @@ export default function HomePage() {
             Guests scan. Kitchen sees. Tickets never get lost.
           </h1>
           <p className="mt-5 max-w-lg text-lg leading-7 text-[var(--ink-soft)]">
-            OrderFlow is browser POS for independent restaurants worldwide. Put a QR on each table.
+            OrderNFlow is browser POS for independent restaurants worldwide. Put a QR on each table.
             Orders land on a kitchen screen in real time — with modifiers, notes, tax for your
             market, and a running clock. No tablet contract. No app download.
           </p>

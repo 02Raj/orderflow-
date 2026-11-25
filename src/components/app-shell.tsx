@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { clearSession, getToken, getUser, SessionUser } from "@/lib/session";
 import { PAYMENTS_ENABLED } from "@/lib/payments";
@@ -12,6 +12,7 @@ import { Icons } from "@/components/icons";
 
 const NAV = [
   { href: "/app", label: "Floor", icon: Icons.floor, roles: ["owner", "manager", "staff"] },
+  { href: "/app/take-order", label: "Take order", icon: Icons.tables, roles: ["owner", "manager", "staff"] },
   { href: "/app/orders", label: "Tickets", icon: Icons.tickets, roles: ["owner", "manager", "staff"] },
   { href: "/kitchen", label: "Kitchen", icon: Icons.kitchen, roles: ["owner", "manager", "staff", "kitchen"] },
   { href: "/app/menu", label: "Menu", icon: Icons.menu, roles: ["owner", "manager"] },
@@ -28,6 +29,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [ready, setReady] = useState(false);
+  const moreDialog = useRef<HTMLDialogElement>(null);
   const stream = useOrderStream(true);
   const newCount = stream.orders.filter((o) => o.status === "new").length;
 
@@ -38,7 +40,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.location.replace("/login");
       return;
     }
-    setUser(session);
     let cancelled = false;
     Promise.all([
       api<Restaurant>("/restaurant", { token }),
@@ -53,7 +54,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       })
       .catch(() => undefined)
       .finally(() => {
-        if (!cancelled) setReady(true);
+        if (!cancelled) {
+          setUser(session);
+          setReady(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -72,14 +76,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const links = NAV.filter((item) => item.roles.includes(user.role));
+  const moreLinks = links.slice(4);
 
   return (
-    <div className="min-h-screen pb-20 md:grid md:grid-cols-[240px_1fr] md:pb-0">
+    <div className="min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom))] md:grid md:grid-cols-[240px_1fr] md:pb-0">
       <aside className="border-b border-[var(--rule)] bg-[color-mix(in_srgb,var(--paper-2)_88%,white)] md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-4 py-4 md:block">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--chili)]">
-              OrderFlow
+              OrderNFlow
             </p>
             <p className="mt-1 font-semibold leading-tight">{restaurant?.name}</p>
             <p className="text-xs capitalize text-[var(--ink-soft)]">
@@ -118,6 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={active ? "page" : undefined}
                 className={`flex items-center justify-between rounded-[12px] px-3 py-2.5 text-sm transition ${
                   active ? "bg-[var(--ink)] text-[var(--ticket)]" : "hover:bg-white/70"
                 }`}
@@ -137,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
       </aside>
       <section className="min-w-0">{children}</section>
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 gap-1 border-t border-[var(--rule)] bg-[var(--ticket)]/95 px-2 py-2 backdrop-blur md:hidden">
+      <nav aria-label="Main navigation" className={`fixed inset-x-0 bottom-0 z-30 grid ${moreLinks.length ? "grid-cols-5" : "grid-cols-4"} gap-1 border-t border-[var(--rule)] bg-[var(--ticket)]/95 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden`}>
         {links.slice(0, 4).map((item) => {
           const active = pathname === item.href;
           const Icon = item.icon;
@@ -145,7 +151,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`rounded-xl px-2 py-2 text-center text-[11px] ${
+              aria-current={active ? "page" : undefined}
+              className={`min-h-11 rounded-xl px-1 py-2 text-center text-[11px] ${
                 active ? "bg-[var(--ink)] text-[var(--ticket)]" : "text-[var(--ink-soft)]"
               }`}
             >
@@ -159,7 +166,29 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
+        {moreLinks.length ? <button type="button" aria-haspopup="dialog" aria-controls="mobile-more"
+          className={`min-h-11 rounded-xl px-1 py-2 text-center text-[11px] ${moreLinks.some((item) => item.href === pathname) ? "bg-[var(--ink)] text-[var(--ticket)]" : "text-[var(--ink-soft)]"}`}
+          onClick={() => moreDialog.current?.showModal()}>
+          <Icons.menu size={16} className="mx-auto mb-0.5" />
+          More
+        </button> : null}
       </nav>
+      {moreLinks.length ? <dialog id="mobile-more" ref={moreDialog} aria-labelledby="mobile-more-title"
+        className="card fixed inset-x-0 top-auto bottom-0 m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto rounded-b-none p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] text-[var(--ink)] backdrop:bg-black/50">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 id="mobile-more-title" className="display text-2xl">More</h2>
+          <button type="button" className="btn btn-ghost min-h-11" onClick={() => moreDialog.current?.close()}>Close</button>
+        </div>
+        <nav aria-label="More pages" className="grid gap-1">
+          {moreLinks.map(({ href, label, icon: Icon }) => (
+            <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}
+              onClick={() => moreDialog.current?.close()}
+              className={`flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-sm ${pathname === href ? "bg-[var(--ink)] text-[var(--ticket)]" : "bg-[var(--paper)]"}`}>
+              <Icon size={18} />{label}
+            </Link>
+          ))}
+        </nav>
+      </dialog> : null}
     </div>
   );
 }

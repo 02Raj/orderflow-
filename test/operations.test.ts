@@ -11,7 +11,7 @@ import { Jwt } from '../src/server/jwt';
 import { MenuService } from '../src/server/menu/menu.service';
 import { OrdersService } from '../src/server/orders/orders.service';
 import { ReportsService } from '../src/server/reports/reports.service';
-import { RestaurantsService } from '../src/server/restaurants/restaurants.service';
+import { isOrderingOpen, RestaurantsService } from '../src/server/restaurants/restaurants.service';
 import { TablesService } from '../src/server/tables/tables.service';
 import { assertWritableSubscription } from '../src/server/subscription';
 import { PAYMENTS_ENABLED } from '../src/lib/payments';
@@ -51,12 +51,12 @@ after(async () => {
 });
 
 describe('site identity', () => {
-  test('public domain and mailboxes are helloorderflow.com', () => {
-    assert.equal(SITE_DOMAIN, 'helloorderflow.com');
-    assert.equal(SITE_URL, 'https://helloorderflow.com');
-    assert.equal(MAIL.hello, 'hello@helloorderflow.com');
-    assert.equal(MAIL.privacy, 'privacy@helloorderflow.com');
-    assert.equal(MAIL.security, 'security@helloorderflow.com');
+  test('public domain and mailboxes are ordernflow.com', () => {
+    assert.equal(SITE_DOMAIN, 'ordernflow.com');
+    assert.equal(SITE_URL, 'https://ordernflow.com');
+    assert.equal(MAIL.hello, 'hello@ordernflow.com');
+    assert.equal(MAIL.privacy, 'privacy@ordernflow.com');
+    assert.equal(MAIL.security, 'security@ordernflow.com');
   });
 
   test('paid checkout stays off until a gateway is wired', () => {
@@ -123,6 +123,36 @@ describe('auth', () => {
 });
 
 describe('menu, tables, QR', () => {
+  test('a duplicate table number returns a conflict the UI can display', async () => {
+    await assert.rejects(() => tables.create(owner, { tableNumber: 1 }), {
+      status: 409,
+      message: 'Table 1 already exists. Choose a different number.',
+    });
+  });
+
+  test('invalid table payloads are rejected before writing', async () => {
+    for (const payload of [null, {}, { tableNumber: 1.5 }, { tableNumber: 0 }, { tableNumber: 2147483648 }, { tableNumber: 30, area: 4 }]) {
+      await assert.rejects(() => tables.create(owner, payload), { status: 400 });
+    }
+  });
+
+  test('area management preserves the QR through edits and deactivate/reactivate', async () => {
+    const created = await tables.create(owner, { tableNumber: 30, label: ' Window ', area: ' Patio ' });
+    assert.equal(created.label, 'Window');
+    assert.equal(created.area, 'Patio');
+    await assert.rejects(() => tables.update(owner, created.id, { tableNumber: 1 }), { status: 409 });
+    const moved = await tables.update(owner, created.id, { tableNumber: 31, label: '', area: 'Main Hall' });
+    assert.equal(moved.label, null);
+    assert.equal(moved.area, 'Main Hall');
+    assert.equal(moved.qrToken, created.qrToken);
+    assert.equal((await tables.findByToken(slug, created.qrToken))?.tableNumber, 31);
+    await tables.update(owner, created.id, { isActive: false });
+    assert.equal(await tables.findByToken(slug, created.qrToken), null);
+    const reactivated = await tables.update(owner, created.id, { isActive: true, area: null });
+    assert.equal(reactivated.area, null);
+    assert.equal((await tables.findByToken(slug, created.qrToken))?.tableId, created.id);
+  });
+
   test('paste-import builds categories and prices in minor units', async () => {
     const result = await menu.importFromText(
       owner,
@@ -202,6 +232,17 @@ describe('guest order → kitchen → reports', () => {
     assert.equal(again.items[0].quantity, 1);
   });
 
+  test('a failed database transaction rolls back all writes', async () => {
+    await assert.rejects(() => db.transaction(async (tx) => {
+      await tx.query('insert into order_counters (restaurant_id, business_date, last_number) values ($1, $2, $3)',
+        [owner.restaurantId, '2099-01-01', 9]);
+      throw new Error('simulate insert failure');
+    }), /simulate insert failure/);
+    const row = await db.one('select last_number from order_counters where restaurant_id = $1 and business_date = $2',
+      [owner.restaurantId, '2099-01-01']);
+    assert.equal(row, null);
+  });
+
   test('86d item cannot be ordered', async () => {
     await assert.rejects(
       () =>
@@ -248,6 +289,59 @@ describe('guest order → kitchen → reports', () => {
     assert.equal(day.cancelled.count, 1);
     assert.equal(day.topItems[0].name, 'Fish pie');
     assert.equal(day.currency, 'GBP');
+  });
+
+  test('venue can pause guest orders while staff can still take them', async () => {
+    await restaurants.update(owner, { orderingPaused: true });
+    const existing = await orders.createGuestOrder({
+      restaurantId: owner.restaurantId, tableId, clientRef: 'guest-1',
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    });
+    assert.equal(existing.items[0].quantity, 1);
+    await assert.rejects(() => orders.createGuestOrder({
+      restaurantId: owner.restaurantId, tableId, clientRef: 'paused-guest',
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    }), /not taking QR orders/);
+    const staffOrder = await orders.createStaffOrder(owner, {
+      restaurantId: owner.restaurantId, tableId, clientRef: 'paused-staff',
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    });
+    assert.equal(staffOrder.status, 'new');
+    await restaurants.update(owner, { orderingPaused: false });
+  });
+
+  test('opening hours use venue local time and support overnight service', () => {
+    const hours = { orderingPaused: false, openingTime: '18:00', closingTime: '02:00', timezone: 'UTC' };
+    assert.equal(isOrderingOpen(hours, new Date('2026-11-24T23:00:00Z')), true);
+    assert.equal(isOrderingOpen(hours, new Date('2026-11-25T01:30:00Z')), true);
+    assert.equal(isOrderingOpen(hours, new Date('2026-11-25T10:00:00Z')), false);
+  });
+
+  test('active boards keep older open tickets beyond the history limit', async () => {
+    const [older, newer] = await Promise.all(['queue-first', 'queue-second'].map((clientRef) =>
+      orders.createStaffOrder(owner, {
+        restaurantId: owner.restaurantId, tableId, clientRef,
+        lines: [{ menuItemId: fishId, quantity: 1 }],
+      }),
+    ));
+    const active = await orders.list(owner.restaurantId, { activeOnly: true, limit: 1 });
+    assert.ok(active.some((ticket) => ticket.id === older.id));
+    assert.ok(active.some((ticket) => ticket.id === newer.id));
+    assert.equal((await orders.list(owner.restaurantId, { limit: 1 })).length, 1);
+  });
+
+  test('concurrent acceptance and rejection cannot both commit', async () => {
+    const ticket = await orders.createStaffOrder(owner, {
+      restaurantId: owner.restaurantId, tableId, clientRef: 'concurrent-ack',
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    });
+    const results = await Promise.allSettled([
+      orders.setStatus(owner, ticket.id, 'accepted'),
+      orders.setStatus(owner, ticket.id, 'cancelled', 'Kitchen closed'),
+    ]);
+    const accepted = results.filter((result) => result.status === 'fulfilled');
+    assert.equal(accepted.length, 1);
+    assert.equal((await orders.findById(owner.restaurantId, ticket.id)).status, accepted[0].value.status);
   });
 });
 

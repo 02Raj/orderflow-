@@ -1,6 +1,5 @@
 "use client";
 
-import { AppShell } from "@/components/app-shell";
 import { PageHeader } from "@/components/ui";
 import { api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
@@ -35,6 +34,8 @@ export default function SettingsPage() {
   const [presets, setPresets] = useState<CountryPreset[]>([]);
   const [saved, setSaved] = useState(false);
   const [rateInput, setRateInput] = useState("");
+  const [orderingSaving, setOrderingSaving] = useState(false);
+  const [orderingMessage, setOrderingMessage] = useState("");
 
   useEffect(() => {
     const token = getToken();
@@ -112,20 +113,43 @@ export default function SettingsPage() {
       : `/api${res.url.startsWith("/") ? res.url : `/${res.url}`}`;
   }
 
+  async function saveOrdering(nextPaused = restaurant?.orderingPaused, includeHours = true) {
+    const token = getToken();
+    if (!token || !restaurant || nextPaused === undefined) return;
+    setOrderingSaving(true);
+    setOrderingMessage("");
+    try {
+      const updated = await api<Restaurant>("/restaurant/ordering", {
+        method: "PATCH",
+        token,
+        json: {
+          orderingPaused: nextPaused,
+          ...(includeHours ? {
+            openingTime: restaurant.openingTime || null,
+            closingTime: restaurant.closingTime || null,
+          } : {}),
+        },
+      });
+      setRestaurant(updated);
+      setOrderingMessage("QR ordering settings saved.");
+    } catch (error) {
+      setOrderingMessage(error instanceof Error ? error.message : "Could not save ordering settings.");
+    } finally {
+      setOrderingSaving(false);
+    }
+  }
+
   if (!restaurant) {
     return (
-      <AppShell>
-        <div className="p-8">
-          <div className="skeleton h-10 w-48" />
-          <div className="skeleton mt-6 h-64 w-full max-w-xl" />
-        </div>
-      </AppShell>
+      <div className="p-8">
+        <div className="skeleton h-10 w-48" />
+        <div className="skeleton mt-6 h-64 w-full max-w-xl" />
+      </div>
     );
   }
 
   return (
-    <AppShell>
-      <div className="grid gap-8 p-5 md:grid-cols-2 md:p-8">
+    <div className="grid gap-8 p-5 md:grid-cols-2 md:p-8">
         <form onSubmit={save}>
           <PageHeader kicker="Venue" title="Settings" copy="Name, contact, and tax for this market." />
           <label className="mt-6 block text-sm">
@@ -159,7 +183,7 @@ export default function SettingsPage() {
           <div className="card mt-8 p-4">
             <h2 className="font-semibold">Tax on tickets</h2>
             <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
-              OrderFlow does not collect this tax. It only prints the number the guest and kitchen
+              OrderNFlow does not collect this tax. It only prints the number the guest and kitchen
               should see. You still file with your accountant / FTA / HMRC / GST portal.
             </p>
             {regions.length ? (
@@ -230,8 +254,40 @@ export default function SettingsPage() {
           <button className="btn btn-ink mt-4">Save</button>
           {saved ? <p className="mt-2 text-sm">Saved.</p> : null}
         </form>
+        <aside className="space-y-5">
+          <div className="card p-5">
+            <h2 className="display text-2xl">QR ordering</h2>
+            <p className="mt-2 text-sm text-[var(--ink-soft)]">
+              Pause guest orders instantly. Staff can still take orders while paused.
+            </p>
+            <button
+              type="button"
+              disabled={orderingSaving}
+              onClick={() => saveOrdering(!restaurant.orderingPaused, false)}
+              className={`btn mt-4 w-full ${restaurant.orderingPaused ? "btn-chili" : "btn-ink"}`}
+            >
+              {restaurant.orderingPaused ? "Resume QR ordering" : "Pause QR ordering"}
+            </button>
+            <p className="mt-4 text-sm font-semibold">Daily guest ordering hours</p>
+            <p className="mt-1 text-xs text-[var(--ink-soft)]">
+              Times use your venue timezone. Leave both blank to accept QR orders all day.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="text-sm">Opens
+                <input type="time" className="field mt-1" value={restaurant.openingTime ?? ""}
+                  onChange={(e) => setRestaurant({ ...restaurant, openingTime: e.target.value || null })} />
+              </label>
+              <label className="text-sm">Closes
+                <input type="time" className="field mt-1" value={restaurant.closingTime ?? ""}
+                  onChange={(e) => setRestaurant({ ...restaurant, closingTime: e.target.value || null })} />
+              </label>
+            </div>
+            <button type="button" className="btn btn-ghost mt-3 w-full" disabled={orderingSaving}
+              onClick={() => saveOrdering()}>Save hours</button>
+            {orderingMessage ? <p className="mt-2 text-xs" role="status">{orderingMessage}</p> : null}
+          </div>
         {PAYMENTS_ENABLED ? (
-        <aside className="card p-5">
+        <div className="card p-5">
           <h2 className="display text-2xl">Billing</h2>
           {billing ? (
             <>
@@ -251,9 +307,9 @@ export default function SettingsPage() {
               </button>
             </>
           ) : null}
-        </aside>
+        </div>
         ) : null}
+        </aside>
       </div>
-    </AppShell>
   );
 }

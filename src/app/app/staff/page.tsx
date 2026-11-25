@@ -1,6 +1,5 @@
 "use client";
 
-import { AppShell } from "@/components/app-shell";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getToken } from "@/lib/session";
@@ -45,8 +44,7 @@ export default function StaffPage() {
   }
 
   return (
-    <AppShell>
-      <div className="grid gap-8 p-5 md:grid-cols-2 md:p-8">
+    <div className="grid gap-8 p-5 md:grid-cols-2 md:p-8">
         <div>
           <PageHeader
             kicker="Team"
@@ -108,6 +106,5 @@ export default function StaffPage() {
           <button className="btn btn-ink mt-4 w-full">Create login</button>
         </form>
       </div>
-    </AppShell>
   );
 }

@@ -1,5 +1,5 @@
-/** Public site identity. Product name stays OrderFlow; this is the web address. */
-export const SITE_DOMAIN = "helloorderflow.com";
+/** Public site identity. Product name: OrderNFlow; domain: ordernflow.com */
+export const SITE_DOMAIN = "ordernflow.com";
 export const SITE_URL = `https://${SITE_DOMAIN}`;
 export const MAIL = {
   hello: `hello@${SITE_DOMAIN}`,

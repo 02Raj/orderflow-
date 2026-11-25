@@ -1,6 +1,5 @@
 "use client";
 
-import { AppShell } from "@/components/app-shell";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
@@ -59,8 +58,7 @@ export default function ReportsPage() {
   }
 
   return (
-    <AppShell>
-      <div className="p-5 md:p-8">
+    <div className="p-5 md:p-8">
         <PageHeader
           kicker="Close"
           title="Reports"
@@ -148,7 +146,6 @@ export default function ReportsPage() {
           </>
         )}
       </div>
-    </AppShell>
   );
 }
 

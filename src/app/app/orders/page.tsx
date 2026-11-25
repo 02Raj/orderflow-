@@ -1,17 +1,17 @@
 "use client";
 
-import { AppShell } from "@/components/app-shell";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { formatElapsed, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { Order, Restaurant } from "@/lib/types";
-import { elapsedFrom, useNow, useOrderStream } from "@/lib/use-order-stream";
+import { elapsedFrom, ticketStatusLabel, useNow, useOrderStream } from "@/lib/use-order-stream";
 import { useEffect, useState } from "react";
 
 export default function OrdersPage() {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [rejecting, setRejecting] = useState<Order | null>(null);
   const [reason, setReason] = useState("");
+  const [actionError, setActionError] = useState("");
   const { orders, ready } = useOrderStream();
   const now = useNow();
 
@@ -26,22 +26,30 @@ export default function OrdersPage() {
   async function move(order: Order, status: string, rejectReason?: string) {
     const token = getToken();
     if (!token) return;
-    const { api } = await import("@/lib/api");
-    await api(`/orders/${order.id}/status`, {
-      method: "PATCH",
-      token,
-      json: { status, reason: rejectReason },
-    });
+    setActionError("");
+    try {
+      const { api } = await import("@/lib/api");
+      await api(`/orders/${order.id}/status`, {
+        method: "PATCH",
+        token,
+        json: { status, reason: rejectReason },
+      });
+      return true;
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not update the ticket. Check its status and retry.");
+      return false;
+    }
   }
 
   return (
-    <AppShell>
+    <>
       <div className="p-5 md:p-8">
         <PageHeader
           kicker="Service"
           title="Tickets"
           copy="Accept, reject with a reason, or mark served. Updates land live from kitchen and floor."
         />
+        {!rejecting && actionError ? <p role="alert" className="mt-4 rounded-xl bg-[#f3d0c8] p-3 text-sm">{actionError}</p> : null}
         {!ready ? (
           <div className="mt-8 skeleton h-48 w-full" />
         ) : orders.length === 0 ? (
@@ -90,14 +98,14 @@ export default function OrdersPage() {
                         restaurant?.locale,
                       )}
                     </td>
-                    <td className="capitalize">{order.status}</td>
+                    <td>{ticketStatusLabel(order.status)}</td>
                     <td className="space-x-2 whitespace-nowrap px-3 py-3">
                       {order.status === "new" ? (
                         <>
                           <button className="underline" onClick={() => move(order, "accepted")}>
-                            Accept
+                            Accept for kitchen
                           </button>
-                          <button className="underline" onClick={() => setRejecting(order)}>
+                          <button className="underline" onClick={() => { setActionError(""); setRejecting(order); }}>
                             Reject
                           </button>
                         </>
@@ -129,13 +137,15 @@ export default function OrdersPage() {
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
+            {actionError ? <p role="alert" className="mt-2 text-sm text-[var(--chili)]">{actionError}</p> : null}
             <div className="mt-4 flex gap-2">
               <button
                 className="btn btn-chili flex-1"
                 onClick={async () => {
-                  await move(rejecting, "cancelled", reason.trim() || "Rejected");
+                  if (!(await move(rejecting, "cancelled", reason.trim() || "Rejected"))) return;
                   setRejecting(null);
                   setReason("");
+                  setActionError("");
                 }}
               >
                 Confirm reject
@@ -145,6 +155,7 @@ export default function OrdersPage() {
                 onClick={() => {
                   setRejecting(null);
                   setReason("");
+                  setActionError("");
                 }}
               >
                 Cancel
@@ -153,6 +164,6 @@ export default function OrdersPage() {
           </div>
         </div>
       ) : null}
-    </AppShell>
+    </>
   );
 }

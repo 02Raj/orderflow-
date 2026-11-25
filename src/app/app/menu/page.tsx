@@ -1,6 +1,5 @@
 "use client";
 
-import { AppShell } from "@/components/app-shell";
 import { PageHeader } from "@/components/ui";
 import { api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
@@ -103,8 +102,7 @@ export default function MenuPage() {
   const currency = restaurant?.currency ?? "USD";
 
   return (
-    <AppShell>
-      <div className="grid gap-8 p-5 md:grid-cols-[1fr_320px] md:p-8">
+    <div className="grid gap-8 p-5 md:grid-cols-[1fr_320px] md:p-8">
         <div>
           <PageHeader
             kicker="Menu"
@@ -242,6 +240,5 @@ export default function MenuPage() {
           </form>
         </aside>
       </div>
-    </AppShell>
   );
 }

@@ -4,15 +4,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — OrderFlow",
-  description: "How OrderFlow handles restaurant and guest data. We do not sell personal data.",
+  title: "Privacy Policy — OrderNFlow",
+  description: "How OrderNFlow handles restaurant and guest data. We do not sell personal data.",
 };
 
 export default function PrivacyPage() {
   return (
     <LegalLayout kicker="Legal" title="Privacy Policy" updated="19 September 2026">
       <p>
-        This notice explains how OrderFlow handles personal data. It is written for restaurant
+        This notice explains how OrderNFlow handles personal data. It is written for restaurant
         owners (our customers) and for guests who scan a table QR. It is not legal advice. If you
         need a signed contract for your counsel, use the{" "}
         <Link href="/dpa" className="underline">
@@ -25,11 +25,11 @@ export default function PrivacyPage() {
       <p>
         <strong>Restaurant operators</strong> are the controller of guest order data (what was
         ordered, table number, optional name and kitchen notes). You decide why that data exists.
-        OrderFlow is the <strong>processor</strong>: we host and show tickets so your kitchen can
+        OrderNFlow is the <strong>processor</strong>: we host and show tickets so your kitchen can
         cook.
       </p>
       <p>
-        OrderFlow is the <strong>controller</strong> of staff accounts, billing, security logs, and
+        OrderNFlow is the <strong>controller</strong> of staff accounts, billing, security logs, and
         this marketing website.
       </p>
 
@@ -114,7 +114,7 @@ export default function PrivacyPage() {
       </p>
 
       <h2 className="display pt-4 text-2xl">Children</h2>
-      <p>OrderFlow is a business product. It is not directed at children under 16.</p>
+      <p>OrderNFlow is a business product. It is not directed at children under 16.</p>
 
       <h2 className="display pt-4 text-2xl">Changes</h2>
       <p>

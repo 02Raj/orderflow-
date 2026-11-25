@@ -13,6 +13,9 @@ export interface Restaurant {
   taxNumber?: string | null;
   phone: string | null;
   address: string | null;
+  orderingPaused: boolean;
+  openingTime: string | null;
+  closingTime: string | null;
 }
 
 export interface MenuModifier {
@@ -43,6 +46,7 @@ export interface DiningTable {
   id: string;
   tableNumber: number;
   label: string | null;
+  area: string | null;
   qrToken: string;
   isActive: boolean;
 }
@@ -70,7 +74,9 @@ export interface Order {
   taxMinor: number;
   subtotalMinor: number;
   note: string | null;
+  rejectionReason?: string | null;
   createdAt: string;
+  updatedAt: string;
   elapsedSeconds: number;
   items: OrderItem[];
 }
