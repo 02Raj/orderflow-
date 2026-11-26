@@ -23,23 +23,35 @@ export interface Services {
 }
 
 const globalForServices = globalThis as typeof globalThis & {
+  orderflowDb?: DatabaseService;
+  orderflowDbReady?: Promise<DatabaseService>;
   orderflowServices?: Services;
-  orderflowReady?: Promise<Services>;
 };
 
-export function getServices(): Promise<Services> {
-  if (globalForServices.orderflowServices) {
-    return Promise.resolve(globalForServices.orderflowServices);
+async function getDb(): Promise<DatabaseService> {
+  if (globalForServices.orderflowDb) {
+    return globalForServices.orderflowDb;
   }
-  if (!globalForServices.orderflowReady) {
-    globalForServices.orderflowReady = bootstrap();
+  if (!globalForServices.orderflowDbReady) {
+    globalForServices.orderflowDbReady = (async () => {
+      const db = new DatabaseService();
+      await db.init();
+      await new SeedService(db).ensureDemoVenue();
+      globalForServices.orderflowDb = db;
+      return db;
+    })().catch((err) => {
+      globalForServices.orderflowDbReady = undefined;
+      throw err;
+    });
   }
-  return globalForServices.orderflowReady;
+  return globalForServices.orderflowDbReady;
 }
 
-async function bootstrap(): Promise<Services> {
-  const db = new DatabaseService();
-  await db.init();
+export async function getServices(): Promise<Services> {
+  if (process.env.NODE_ENV === 'production' && globalForServices.orderflowServices) {
+    return globalForServices.orderflowServices;
+  }
+  const db = await getDb();
   const audit = new AuditService(db);
   const jwt = new Jwt();
   const auth = new AuthService(db, jwt, audit);
@@ -49,7 +61,6 @@ async function bootstrap(): Promise<Services> {
   const orders = new OrdersService(db, audit, restaurants);
   const reports = new ReportsService(db, restaurants);
   const billing = new BillingService(db, audit);
-  await new SeedService(db).ensureDemoVenue();
   const services: Services = {
     db,
     audit,
@@ -61,6 +72,8 @@ async function bootstrap(): Promise<Services> {
     restaurants,
     tables,
   };
-  globalForServices.orderflowServices = services;
+  if (process.env.NODE_ENV === 'production') {
+    globalForServices.orderflowServices = services;
+  }
   return services;
 }

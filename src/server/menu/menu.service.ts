@@ -1,4 +1,5 @@
-import { NotFoundException } from '../errors';
+import { BadRequestException, NotFoundException } from '../errors';
+import type { ModifierGroup } from '../../lib/types';
 import { randomUUID } from 'node:crypto';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
@@ -14,6 +15,7 @@ export interface MenuModifier {
   id: string;
   name: string;
   priceAdjustmentMinor: number;
+  groupId?: string | null;
 }
 
 export interface MenuItem {
@@ -27,6 +29,7 @@ export interface MenuItem {
   sortOrder: number;
   imageUrl: string | null;
   modifiers: MenuModifier[];
+  modifierGroups?: ModifierGroup[];
 }
 
 export class MenuService {
@@ -36,7 +39,7 @@ export class MenuService {
   ) {}
 
   async getMenu(restaurantId: string) {
-    const [categories, items, modifiers] = await Promise.all([
+    const [categories, items, modifiers, groups] = await Promise.all([
       this.db.many<MenuCategory>(
         `select id, name, sort_order as "sortOrder" from menu_categories
          where restaurant_id = $1 and archived_at is null order by sort_order, name`,
@@ -51,8 +54,14 @@ export class MenuService {
         [restaurantId],
       ),
       this.db.many<MenuModifier & { menuItemId: string }>(
-        `select id, menu_item_id as "menuItemId", name, price_adjustment_minor as "priceAdjustmentMinor"
-         from menu_modifiers where restaurant_id = $1 and is_active = true`,
+        `select id, menu_item_id as "menuItemId", group_id as "groupId", name, price_adjustment_minor as "priceAdjustmentMinor"
+         from menu_modifiers where restaurant_id = $1 and is_active = true order by name, id`,
+        [restaurantId],
+      ),
+      this.db.many<ModifierGroup & { menuItemId: string }>(
+        `select g.id, g.menu_item_id as "menuItemId", g.name, g.min_choices as "minChoices", g.max_choices as "maxChoices"
+         from menu_modifier_groups g join menu_items i on i.id = g.menu_item_id
+         where i.restaurant_id = $1 and i.archived_at is null order by g.created_at, g.id`,
         [restaurantId],
       ),
     ]);
@@ -62,6 +71,7 @@ export class MenuService {
       items: items.map((item) => ({
         ...item,
         modifiers: modifiers.filter((m) => m.menuItemId === item.id),
+        modifierGroups: groups.filter((group) => group.menuItemId === item.id),
       })),
     };
   }
@@ -125,6 +135,82 @@ export class MenuService {
       [id, user.restaurantId, itemId, input.name.trim(), input.priceAdjustmentMinor],
     );
     return { id, name: input.name.trim(), priceAdjustmentMinor: input.priceAdjustmentMinor };
+  }
+
+  async saveModifierGroup(user: AuthenticatedUser, itemId: string, input: {
+    name: string; minChoices: number; maxChoices: number;
+    options: { id?: string; name: string; priceAdjustmentMinor: number }[];
+  }, groupId?: string) {
+    const name = typeof input?.name === 'string' ? input.name.trim() : '';
+    const { minChoices, maxChoices, options } = input ?? {};
+    if (!name || name.length > 60 || !Array.isArray(options) || options.length > 20 ||
+        !Number.isInteger(minChoices) || !Number.isInteger(maxChoices) ||
+        minChoices < 0 || maxChoices < 1 || minChoices > maxChoices || maxChoices > options.length) {
+      throw new BadRequestException('Enter a group name and choices. Maximum choices cannot exceed the number of options.');
+    }
+    const names = new Set<string>();
+    const optionIds = new Set<string>();
+    for (const option of options) {
+      const label = typeof option?.name === 'string' ? option.name.trim() : '';
+      if (!label || label.length > 60 || names.has(label.toLowerCase()) ||
+          !Number.isInteger(option.priceAdjustmentMinor) || option.priceAdjustmentMinor < 0 ||
+          option.priceAdjustmentMinor > 1_000_000 ||
+          (option.id != null && (typeof option.id !== 'string' || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(option.id) || optionIds.has(option.id)))) {
+        throw new BadRequestException('Use unique option names and valid extra prices.');
+      }
+      names.add(label.toLowerCase());
+      if (option.id) optionIds.add(option.id);
+    }
+
+    const id = groupId ?? randomUUID();
+    await this.db.transaction(async (tx) => {
+      const item = await tx.one(
+        'select id from menu_items where id = $1 and restaurant_id = $2 and archived_at is null for update',
+        [itemId, user.restaurantId],
+      );
+      if (!item) throw new NotFoundException('Menu item not found');
+      const duplicate = await tx.one(
+        'select id from menu_modifier_groups where menu_item_id = $1 and lower(name) = lower($2) and id <> $3',
+        [itemId, name, id],
+      );
+      if (duplicate) throw new BadRequestException('An option group with this name already exists on the item.');
+      if (groupId) {
+        const updated = await tx.one(
+          'update menu_modifier_groups set name = $3, min_choices = $4, max_choices = $5 where id = $1 and menu_item_id = $2 returning id',
+          [id, itemId, name, minChoices, maxChoices],
+        );
+        if (!updated) throw new NotFoundException('Option group not found');
+      } else {
+        await tx.query('insert into menu_modifier_groups (id, menu_item_id, name, min_choices, max_choices) values ($1, $2, $3, $4, $5)',
+          [id, itemId, name, minChoices, maxChoices]);
+      }
+      await tx.query('update menu_modifiers set is_active = false where group_id = $1', [id]);
+      for (const option of options) {
+        if (option.id) {
+          const updated = await tx.one(
+            'update menu_modifiers set name = $3, price_adjustment_minor = $4, is_active = true where id = $1 and group_id = $2 returning id',
+            [option.id, id, option.name.trim(), option.priceAdjustmentMinor],
+          );
+          if (!updated) throw new BadRequestException('An option no longer belongs to this group. Refresh the menu.');
+        } else {
+          await tx.query(
+            'insert into menu_modifiers (id, restaurant_id, menu_item_id, group_id, name, price_adjustment_minor) values ($1, $2, $3, $4, $5, $6)',
+            [randomUUID(), user.restaurantId, itemId, id, option.name.trim(), option.priceAdjustmentMinor],
+          );
+        }
+      }
+    });
+    return { id };
+  }
+
+  async removeModifierGroup(user: AuthenticatedUser, itemId: string, id: string) {
+    const group = await this.db.one(
+      `delete from menu_modifier_groups g using menu_items i
+       where g.id = $1 and g.menu_item_id = i.id and i.id = $2 and i.restaurant_id = $3 returning g.id`,
+      [id, itemId, user.restaurantId],
+    );
+    if (!group) throw new NotFoundException('Option group not found');
+    return { ok: true };
   }
 
   async updateItem(
@@ -249,12 +335,17 @@ export class MenuService {
       [id, restaurantId],
     );
     if (!item) throw new NotFoundException('Menu item not found');
-    const modifiers = await this.db.many<MenuModifier>(
-      `select id, name, price_adjustment_minor as "priceAdjustmentMinor"
-       from menu_modifiers where menu_item_id = $1 and is_active = true`,
-      [id],
-    );
-    return { ...item, modifiers };
+    const [modifiers, modifierGroups] = await Promise.all([
+      this.db.many<MenuModifier>(
+        `select id, name, group_id as "groupId", price_adjustment_minor as "priceAdjustmentMinor"
+         from menu_modifiers where menu_item_id = $1 and is_active = true order by name, id`, [id],
+      ),
+      this.db.many<ModifierGroup>(
+        `select id, name, min_choices as "minChoices", max_choices as "maxChoices"
+         from menu_modifier_groups where menu_item_id = $1 order by created_at, id`, [id],
+      ),
+    ]);
+    return { ...item, modifiers, modifierGroups };
   }
 }
 

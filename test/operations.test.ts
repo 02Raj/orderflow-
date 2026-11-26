@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,9 +8,9 @@ import { AuditService } from '../src/server/audit/audit.service';
 import { AuthService } from '../src/server/auth/auth.service';
 import { BillingService } from '../src/server/billing/billing.service';
 import { DatabaseService } from '../src/server/database/database.service';
-import { Jwt } from '../src/server/jwt';
+import { Jwt, userFromToken } from '../src/server/jwt';
 import { MenuService } from '../src/server/menu/menu.service';
-import { OrdersService } from '../src/server/orders/orders.service';
+import { businessDateFor, OrdersService } from '../src/server/orders/orders.service';
 import { ReportsService } from '../src/server/reports/reports.service';
 import { isOrderingOpen, RestaurantsService } from '../src/server/restaurants/restaurants.service';
 import { TablesService } from '../src/server/tables/tables.service';
@@ -267,6 +268,10 @@ describe('guest order → kitchen → reports', () => {
     await orders.setStatus(owner, id, 'ready');
     const served = await orders.setStatus(owner, id, 'served');
     assert.equal(served.status, 'served');
+    const recalled = await orders.recall(owner, id);
+    assert.equal(recalled.status, 'ready');
+    assert.equal((await orders.list(owner.restaurantId, { activeOnly: true })).length, 1);
+    await orders.setStatus(owner, id, 'served');
     const stillOpen = await orders.list(owner.restaurantId, { activeOnly: true });
     assert.equal(stillOpen.length, 0);
   });
@@ -289,6 +294,30 @@ describe('guest order → kitchen → reports', () => {
     assert.equal(day.cancelled.count, 1);
     assert.equal(day.topItems[0].name, 'Fish pie');
     assert.equal(day.currency, 'GBP');
+  });
+
+  test('staff can create a takeaway with a pickup token and no table', async () => {
+    const takeaway = await orders.createStaffOrder(owner, {
+      restaurantId: owner.restaurantId,
+      fulfillmentType: 'takeaway',
+      clientRef: 'takeaway-alex',
+      customerLabel: 'Alex',
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    });
+    assert.equal(takeaway.fulfillmentType, 'takeaway');
+    assert.equal(takeaway.tableId, null);
+    assert.equal(takeaway.customerLabel, 'Alex');
+    assert.ok(takeaway.orderNumber > 0);
+    await orders.setStatus(owner, takeaway.id, 'cancelled', 'test cleanup');
+  });
+
+  test('takeaway requires a pickup name', async () => {
+    await assert.rejects(() => orders.createStaffOrder(owner, {
+      restaurantId: owner.restaurantId,
+      fulfillmentType: 'takeaway',
+      clientRef: 'takeaway-no-name',
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    }), /customer name/i);
   });
 
   test('venue can pause guest orders while staff can still take them', async () => {
@@ -384,4 +413,122 @@ describe('tenants and billing gate', () => {
     });
     assert.equal(stillWorks.status, 'new');
   });
+});
+
+describe('password management', () => {
+  test('user can change password and reset forgotten password via token', async () => {
+    const res = await auth.signup({
+      email: 'pw-reset@venue.test',
+      password: 'initial-password',
+      fullName: 'Reset User',
+      restaurantName: 'Reset Room',
+      countryCode: 'US',
+      taxRegion: 'NYC',
+    });
+
+    await assert.rejects(
+      () => auth.changePassword(res.user, 'wrong-pass', 'new-password-1'),
+      /incorrect/i,
+    );
+
+    await auth.changePassword(res.user, 'initial-password', 'changed-password-1');
+    await auth.login('pw-reset@venue.test', 'changed-password-1');
+
+    const req = await auth.requestPasswordReset('pw-reset@venue.test');
+    assert.equal(req.ok, true);
+    assert.ok(req.devResetUrl);
+    const token = new URL(req.devResetUrl!).searchParams.get('token')!;
+    const attempts = await Promise.allSettled([
+      auth.resetPassword(token, 'final-password-2'),
+      auth.resetPassword(token, 'final-password-2'),
+    ]);
+    assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
+    await auth.login('pw-reset@venue.test', 'final-password-2');
+    await assert.rejects(() => auth.resetPassword(token, 'reused-token-3'), /invalid|expired/i);
+  });
+});
+
+describe('live shift corrections and payments', () => {
+  test('disabling and re-enabling staff never restores previously issued sessions', async () => {
+    const email = 'shift-revocation@venue.test';
+    const staff = await auth.createStaff(owner, { email, password: 'staff-password', fullName: 'Shift Staff', role: 'staff' });
+    const original = await userFromToken((await auth.login(email, 'staff-password')).token);
+    assert.equal(await auth.sessionIsCurrent(staff.id, owner.restaurantId, original.sessionVersion), true);
+    await auth.setStaffActive(owner, staff.id, false);
+    await assert.rejects(() => auth.login(email, 'staff-password'), /invalid/i);
+    await auth.setStaffActive(owner, staff.id, true);
+    assert.equal(await auth.sessionIsCurrent(staff.id, owner.restaurantId, original.sessionVersion), false);
+    const current = await userFromToken((await auth.login(email, 'staff-password')).token);
+    assert.equal(await auth.sessionIsCurrent(staff.id, owner.restaurantId, current.sessionVersion), true);
+  });
+
+  test('corrections update kitchen readiness and prevent duplicate external payments', async () => {
+    const ticket = await orders.createStaffOrder(owner, {
+      restaurantId: owner.restaurantId, tableId, clientRef: randomUUID(),
+      lines: [{ menuItemId: fishId, quantity: 1 }],
+    });
+    await orders.setStatus(owner, ticket.id, 'accepted');
+    const preparing = await orders.setStatus(owner, ticket.id, 'preparing');
+    await assert.rejects(() => orders.setStatus(owner, ticket.id, 'ready'), /remaining items/);
+    await orders.setStatus(owner, ticket.id, 'ready', undefined, true, new Date(preparing.updatedAt).toISOString());
+    const itemId = randomUUID();
+    const added = await orders.addItem(owner, ticket.id, { menuItemId: fishId, quantity: 1 }, itemId, 'Guest added another');
+    assert.equal(added.status, 'preparing');
+    assert.equal(added.totalMinor, ticket.totalMinor * 2);
+    assert.equal(added.items.find((item) => item.id === itemId)?.status, 'pending');
+    assert.match(added.correctionSummary ?? '', /Guest added another/);
+    await assert.rejects(() => orders.addItem(owner, ticket.id, { menuItemId: fishId, quantity: 1 }, itemId, 'Retry'), /already been added/);
+    const corrected = await orders.correctItem(owner, ticket.id, itemId, { quantity: 0, expectedQuantity: 1, reason: 'Guest changed mind' });
+    assert.equal(corrected.items.length, 1);
+    assert.equal(corrected.totalMinor, ticket.totalMinor);
+    assert.match(corrected.correctionSummary ?? '', /Guest added another[\s\S]*Guest changed mind/);
+    await assert.rejects(() => orders.acknowledgeCorrections(owner, ticket.id, added.correctionSummary), /ticket changed/i);
+    const acknowledged = await orders.acknowledgeCorrections(owner, ticket.id, corrected.correctionSummary);
+    assert.equal(acknowledged.correctionSummary, null);
+    await assert.rejects(() => orders.recordPayment(owner, ticket.id, 'cash', added.totalMinor), /ticket has changed/i);
+
+    const payments = await Promise.allSettled([
+      orders.recordPayment(owner, ticket.id, 'cash', corrected.totalMinor),
+      orders.recordPayment(owner, ticket.id, 'upi', corrected.totalMinor),
+    ]);
+    assert.equal(payments.filter((result) => result.status === 'fulfilled').length, 1);
+    const paid = await orders.findById(owner.restaurantId, ticket.id);
+    assert.equal(paid.paidMinor, corrected.totalMinor);
+    await assert.rejects(() => orders.setStatus(owner, ticket.id, 'cancelled'), /payment reversal/);
+    const date = businessDateFor(new Date(), (await restaurants.findById(owner.restaurantId)).timezone);
+    assert.equal((await reports.range(owner.restaurantId, date, date)).collectedMinor, paid.paidMinor);
+    const reversed = await orders.reversePayment(owner, ticket.id, 'Incorrect cash entry', new Date(paid.updatedAt).toISOString());
+    assert.equal(reversed.paidMinor, 0);
+    assert.equal((await reports.range(owner.restaurantId, date, date)).collectedMinor, 0);
+    const ledger = (await reports.range(owner.restaurantId, date, date)).paymentsByMethod;
+    assert.equal(ledger[0].reversedMinor, paid.paidMinor);
+  });
+});
+
+test('required modifier groups validate QR, staff and ticket additions while preserving selected option IDs on edit', async () => {
+  const latte = await menu.createItem(owner, { name: 'Modifier test latte', priceMinor: 400 });
+  const { id: groupId } = await menu.saveModifierGroup(owner, latte.id, {
+    name: 'Size', minChoices: 1, maxChoices: 1,
+    options: [{ name: 'Regular', priceAdjustmentMinor: 0 }, { name: 'Large', priceAdjustmentMinor: 100 }],
+  });
+  const item = (await menu.getPublicMenu(owner.restaurantId)).items.find((entry) => entry.id === latte.id)!;
+  assert.equal(item.modifierGroups?.[0].id, groupId);
+  const large = item.modifiers.find((option) => option.name === 'Large')!;
+  const regular = item.modifiers.find((option) => option.name === 'Regular')!;
+  const order = (modifierIds: string[]) => ({
+    restaurantId: owner.restaurantId, tableId, clientRef: randomUUID(),
+    lines: [{ menuItemId: latte.id, quantity: 1, modifierIds }],
+  });
+  await assert.rejects(() => orders.createGuestOrder(order([])), /Size: choose at least 1/);
+  await assert.rejects(() => orders.createStaffOrder(owner, order([large.id, regular.id])), /Size: choose up to 1/);
+  const valid = await orders.createStaffOrder(owner, order([large.id]));
+  assert.equal(valid.items[0].lineTotalMinor, 500);
+  await assert.rejects(() => orders.addItem(owner, valid.id, order([]).lines[0], randomUUID(), 'One more'), /Size: choose at least 1/);
+  await menu.saveModifierGroup(owner, latte.id, {
+    name: 'Size', minChoices: 1, maxChoices: 1,
+    options: [{ id: large.id, name: 'Large', priceAdjustmentMinor: 120 }],
+  }, groupId);
+  const added = await orders.addItem(owner, valid.id, order([large.id]).lines[0], randomUUID(), 'One more');
+  assert.deepEqual(added.items.map((line) => line.lineTotalMinor).sort(), [500, 520]);
+  await assert.rejects(() => orders.createStaffOrder(owner, order([regular.id])), /no longer available/);
 });

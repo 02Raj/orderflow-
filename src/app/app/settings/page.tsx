@@ -2,7 +2,8 @@
 
 import { PageHeader } from "@/components/ui";
 import { api, formatMoney } from "@/lib/api";
-import { getToken } from "@/lib/session";
+import { getToken, saveSession, type SessionUser } from "@/lib/session";
+import { readKitchenTargets } from "@/lib/kitchen-targets";
 import { computeTotals, formatTaxRate, taxGuestHint } from "@/lib/tax";
 import { PAYMENTS_ENABLED } from "@/lib/payments";
 import { BillingStatus, Restaurant } from "@/lib/types";
@@ -32,10 +33,20 @@ export default function SettingsPage() {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [presets, setPresets] = useState<CountryPreset[]>([]);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMessage, setPwMessage] = useState("");
+  const [pwError, setPwError] = useState("");
   const [saved, setSaved] = useState(false);
   const [rateInput, setRateInput] = useState("");
   const [orderingSaving, setOrderingSaving] = useState(false);
   const [orderingMessage, setOrderingMessage] = useState("");
+  const [targetMessage, setTargetMessage] = useState("");
+  const [targetSaving, setTargetSaving] = useState(false);
+  const [target, setTarget] = useState("");
+  const [urgent, setUrgent] = useState("");
 
   useEffect(() => {
     const token = getToken();
@@ -43,6 +54,9 @@ export default function SettingsPage() {
     api<Restaurant>("/restaurant", { token }).then((r) => {
       setRestaurant(r);
       setRateInput((r.taxRateBp / 100).toString());
+      const legacy = readKitchenTargets();
+      setTarget(String(r.kitchenTargetMinutes ?? legacy.targetMinutes));
+      setUrgent(String(r.kitchenUrgentMinutes ?? legacy.forgottenMinutes));
     });
     if (PAYMENTS_ENABLED) {
       api<BillingStatus>("/billing/status", { token }).then(setBilling);
@@ -136,6 +150,57 @@ export default function SettingsPage() {
       setOrderingMessage(error instanceof Error ? error.message : "Could not save ordering settings.");
     } finally {
       setOrderingSaving(false);
+    }
+  }
+
+  async function savePassword(e: FormEvent) {
+    e.preventDefault();
+    setPwError("");
+    setPwMessage("");
+    if (newPassword.length < 8) {
+      setPwError("New password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError("New passwords do not match.");
+      return;
+    }
+    const token = getToken();
+    if (!token) return;
+    setPwSaving(true);
+    try {
+      const session = await api<{ token: string; user: SessionUser }>("/auth/change-password", {
+        method: "POST",
+        token,
+        json: { currentPassword, newPassword },
+      });
+      saveSession(session.token, session.user);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPwMessage("Password updated.");
+    } catch (error) {
+      setPwError(error instanceof Error ? error.message : "Could not update password.");
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
+  async function saveTargets(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const token = getToken();
+    if (!token) return;
+    setTargetSaving(true);
+    setTargetMessage("");
+    try {
+      await api("/restaurant/kitchen-targets", {
+        method: "PATCH", token, json: { targetMinutes: Number(target), forgottenMinutes: Number(urgent) },
+      });
+      setTargetMessage("Kitchen targets saved for all screens.");
+    } catch (failure) {
+      setTargetMessage(failure instanceof Error ? failure.message : "Could not save kitchen targets.");
+    } finally {
+      setTargetSaving(false);
     }
   }
 
@@ -255,6 +320,17 @@ export default function SettingsPage() {
           {saved ? <p className="mt-2 text-sm">Saved.</p> : null}
         </form>
         <aside className="space-y-5">
+          <form method="post" onSubmit={saveTargets} className="card space-y-3 p-5">
+            <h2 className="display text-2xl">Kitchen timers</h2>
+            <label className="block text-sm">Target time in minutes
+              <input className="field mt-1" type="number" required min={2} max={43} value={target} onChange={(event) => setTarget(event.target.value)} />
+            </label>
+            <label className="block text-sm">Urgent alert in minutes
+              <input className="field mt-1" type="number" required min={Number(target) + 2} max={45} value={urgent} onChange={(event) => setUrgent(event.target.value)} />
+            </label>
+            <button disabled={targetSaving} className="btn btn-ink">Save kitchen timers</button>
+            {targetMessage && <p role="status" className="text-sm">{targetMessage}</p>}
+          </form>
           <div className="card p-5">
             <h2 className="display text-2xl">QR ordering</h2>
             <p className="mt-2 text-sm text-[var(--ink-soft)]">
@@ -309,6 +385,52 @@ export default function SettingsPage() {
           ) : null}
         </div>
         ) : null}
+        <form onSubmit={savePassword} className="card p-5">
+          <h2 className="display text-2xl">Password &amp; security</h2>
+          <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+            Update the password for your logged-in account.
+          </p>
+          <label className="mt-4 block text-sm">
+            Current password
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              className="field mt-1"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          </label>
+          <label className="mt-3 block text-sm">
+            New password
+            <input
+              type="password"
+              minLength={8}
+              required
+              autoComplete="new-password"
+              className="field mt-1"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </label>
+          <label className="mt-3 block text-sm">
+            Confirm new password
+            <input
+              type="password"
+              minLength={8}
+              required
+              autoComplete="new-password"
+              className="field mt-1"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </label>
+          {pwError ? <p role="alert" className="mt-3 text-xs text-[var(--chili)]">{pwError}</p> : null}
+          {pwMessage ? <p role="status" className="mt-3 text-xs text-[var(--sage)]">{pwMessage}</p> : null}
+          <button type="submit" disabled={pwSaving} className="btn btn-ink mt-4 w-full">
+            {pwSaving ? "Updating…" : "Update password"}
+          </button>
+        </form>
         </aside>
       </div>
   );

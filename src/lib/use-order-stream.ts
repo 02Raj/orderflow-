@@ -57,6 +57,7 @@ export function useOrderStream(activeOnly = false) {
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [syncFailed, setSyncFailed] = useState(false);
   const onCreated = useRef<((order: Order) => void) | null>(null);
+  const onStatusChange = useRef<((order: Order, previousStatus: string) => void) | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -67,16 +68,19 @@ export function useOrderStream(activeOnly = false) {
     let retry = 0;
     let initialized = false;
     let inFlight: AbortController | null = null;
-    const known = new Set<string>();
+    const known = new Map<string, string>();
     const duringLoad: Order[] = [];
 
     const path = activeOnly ? "/orders?active=1" : "/orders";
 
     const merge = (incoming: Order, type?: string) => {
-      if (type === "created" && !known.has(incoming.id)) {
+      const prevStatus = known.get(incoming.id);
+      if (type === "created" && !prevStatus) {
         onCreated.current?.(incoming);
+      } else if (prevStatus && prevStatus !== incoming.status) {
+        onStatusChange.current?.(incoming, prevStatus);
       }
-      known.add(incoming.id);
+      known.set(incoming.id, incoming.status);
       if (inFlight) duringLoad.push(incoming);
       setOrders((prev) => mergeTicket(prev, incoming, activeOnly));
     };
@@ -92,8 +96,15 @@ export function useOrderStream(activeOnly = false) {
         // A live status change can arrive while the database snapshot is in flight.
         const next = duringLoad.reduce((orders, order) => mergeTicket(orders, order, activeOnly), snapshot);
         for (const order of next) {
-          if (initialized && order.status === "new" && !known.has(order.id)) onCreated.current?.(order);
-          known.add(order.id);
+          const prevStatus = known.get(order.id);
+          if (initialized) {
+            if (!prevStatus && order.status === "new") {
+              onCreated.current?.(order);
+            } else if (prevStatus && prevStatus !== order.status) {
+              onStatusChange.current?.(order, prevStatus);
+            }
+          }
+          known.set(order.id, order.status);
         }
         setOrders(next);
         setReady(true);
@@ -158,6 +169,10 @@ export function useOrderStream(activeOnly = false) {
     onCreated.current = fn;
   }, []);
 
+  const setOnStatusChange = useCallback((fn: (order: Order, previousStatus: string) => void) => {
+    onStatusChange.current = fn;
+  }, []);
+
   return {
     orders,
     setOrders,
@@ -166,5 +181,6 @@ export function useOrderStream(activeOnly = false) {
     lastSyncAt,
     syncFailed,
     setOnCreated,
+    setOnStatusChange,
   };
 }

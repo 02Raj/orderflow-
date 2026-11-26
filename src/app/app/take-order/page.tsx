@@ -1,13 +1,17 @@
 "use client";
 
+import { ModifierPicker } from "@/components/modifier-picker";
+import { modifierSelectionError } from "@/lib/modifiers";
+
 import { PageHeader } from "@/components/ui";
+import { ThermalPrintSheet } from "@/components/thermal-print-sheet";
 import { ApiError, api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { computeTotals } from "@/lib/tax";
 import type { DiningTable, MenuCategory, MenuItem, Order, Restaurant } from "@/lib/types";
 import { isAwaitingKitchen, syncIsStale, ticketStatusLabel, useNow } from "@/lib/use-order-stream";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Line {
   key: string;
@@ -18,7 +22,8 @@ interface Line {
 
 interface StaffAttempt {
   clientRef: string;
-  tableId: string;
+  tableId?: string | null;
+  fulfillmentType: "dine_in" | "takeaway";
   customerLabel?: string;
   note?: string;
   lines: { menuItemId: string; quantity: number; modifierIds: string[] }[];
@@ -36,6 +41,7 @@ export default function TakeOrderPage() {
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [tableId, setTableId] = useState("");
+  const [fulfillmentType, setFulfillmentType] = useState<"dine_in" | "takeaway">("dine_in");
   const [lines, setLines] = useState<Line[]>([]);
   const [selected, setSelected] = useState<MenuItem | null>(null);
   const [modifiers, setModifiers] = useState<string[]>([]);
@@ -50,6 +56,7 @@ export default function TakeOrderPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sent, setSent] = useState<Order | null>(null);
+  const [printOrder, setPrintOrder] = useState<Order | null>(null);
   const [lastTicketSync, setLastTicketSync] = useState<number | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const sending = useRef(false);
@@ -129,6 +136,7 @@ export default function TakeOrderPage() {
   const subtotal = lines.reduce((sum, line) => sum + (line.item.priceMinor + optionCost(line.item, line.modifierIds)) * line.quantity, 0);
   const totals = computeTotals(subtotal, { taxRateBp: venue?.taxRateBp ?? 0, taxInclusive: venue?.taxInclusive ?? false });
   const money = (minor: number) => formatMoney(minor, venue?.currency ?? "USD", venue?.locale);
+  const activeFulfillmentType = pendingAttempt?.fulfillmentType ?? fulfillmentType;
   const currentTable = tables.find((table) => table.id === (pendingAttempt?.tableId ?? tableId));
   const tableAreas = [...new Set(tables.map((table) => table.area))];
   const normalize = (value: string) => value.toLocaleLowerCase(venue?.locale).normalize("NFD").replace(/(\p{Script=Latin})\p{M}+/gu, "$1");
@@ -161,10 +169,12 @@ export default function TakeOrderPage() {
 
   async function send() {
     const token = getToken();
-    if (!token || sending.current || (!pendingAttempt && (!currentTable || !lines.length))) return;
+    const destinationReady = fulfillmentType === "takeaway" ? !!customerLabel.trim() : !!currentTable;
+    if (!token || sending.current || (!pendingAttempt && (!destinationReady || !lines.length))) return;
     const request: StaffAttempt = pendingAttempt ?? {
       clientRef: crypto.randomUUID(),
-      tableId,
+      tableId: fulfillmentType === "dine_in" ? tableId : null,
+      fulfillmentType,
       customerLabel: customerLabel || undefined,
       note: note || undefined,
       lines: lines.map((line) => ({
@@ -208,10 +218,11 @@ export default function TakeOrderPage() {
     }
   }
 
+  const finishPrinting = useCallback(() => setPrintOrder(null), []);
+
   return (
     <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
         <PageHeader kicker="Floor" title="Take an order" />
-        {loading ? <p role="status" className="mt-5 text-sm text-[var(--ink-soft)]">Loading tables and menu…</p> : null}
         {loadError ? <div className="card mt-5 flex flex-wrap items-center gap-3 p-4">
           <p role="alert">{loadError}</p>
           <button type="button" className="btn btn-ghost min-h-11" onClick={() => {
@@ -220,27 +231,56 @@ export default function TakeOrderPage() {
             setLoadAttempt((attempt) => attempt + 1);
           }}>Try again</button>
         </div> : null}
-        <label className="mt-5 block max-w-sm text-sm font-semibold">Table
-          <select id="table-picker" className="field mt-2 min-h-11" value={currentTable?.id ?? ""} disabled={loading || !!loadError || !!pendingAttempt || tables.length === 0}
-            onChange={(e) => setTableId(e.target.value)}>
-            <option value="">{loading ? "Loading tables…" : tables.length > 0 ? "Choose a table" : "No active tables"}</option>
-            {tableAreas.filter((area) => area !== null).map((area) => (
-              <optgroup key={area} label={area}>
-                {tables.filter((table) => table.area === area).map((table) => <option key={table.id} value={table.id}>Table {table.tableNumber}{table.label ? ` · ${table.label}` : ""}</option>)}
-              </optgroup>
-            ))}
-            {tables.filter((table) => table.area === null).map((table) => <option key={table.id} value={table.id}>Table {table.tableNumber}{table.label ? ` · ${table.label}` : ""}</option>)}
-          </select>
-        </label>
-        <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+
+        {loading ? (
+          <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+            <div className="space-y-4">
+              <div className="skeleton h-16 rounded-2xl" />
+              <div className="skeleton h-11 rounded-xl" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="skeleton h-16 rounded-2xl" />
+                ))}
+              </div>
+            </div>
+            <div className="skeleton h-72 rounded-2xl" />
+          </div>
+        ) : (
+        <>
+        <div className="card mt-5 flex flex-wrap items-end justify-between gap-4 p-4">
+          <div className="inline-flex rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-1" aria-label="Order type">
+            <button type="button" aria-pressed={activeFulfillmentType === "dine_in"} disabled={!!pendingAttempt}
+              className={`btn min-h-10 ${activeFulfillmentType === "dine_in" ? "btn-ink" : ""}`}
+              onClick={() => setFulfillmentType("dine_in")}>Dine in</button>
+            <button type="button" aria-pressed={activeFulfillmentType === "takeaway"} disabled={!!pendingAttempt}
+              className={`btn min-h-10 ${activeFulfillmentType === "takeaway" ? "btn-ink" : ""}`}
+              onClick={() => { setFulfillmentType("takeaway"); setTableId(""); }}>Takeaway</button>
+          </div>
+          {activeFulfillmentType === "dine_in" ? <label className="min-w-56 flex-1 max-w-sm text-xs font-semibold uppercase tracking-wider text-[var(--ink-soft)]">Table
+            <select id="table-picker" className="field mt-1 min-h-11 text-sm text-[var(--ink)]" value={currentTable?.id ?? ""} disabled={loading || !!loadError || !!pendingAttempt || tables.length === 0}
+              onChange={(e) => setTableId(e.target.value)}>
+              <option value="">{tables.length > 0 ? "Choose a table" : "No active tables"}</option>
+              {tableAreas.filter((area) => area !== null).map((area) => (
+                <optgroup key={area} label={area}>
+                  {tables.filter((table) => table.area === area).map((table) => <option key={table.id} value={table.id}>Table {table.tableNumber}{table.label ? ` · ${table.label}` : ""}</option>)}
+                </optgroup>
+              ))}
+              {tables.filter((table) => table.area === null).map((table) => <option key={table.id} value={table.id}>Table {table.tableNumber}{table.label ? ` · ${table.label}` : ""}</option>)}
+            </select>
+          </label> : <label className="min-w-56 flex-1 max-w-sm text-xs font-semibold uppercase tracking-wider text-[var(--ink-soft)]">Pickup name
+            <input id="pickup-name" className="field mt-1 min-h-11 text-sm text-[var(--ink)]" value={customerLabel} disabled={!!pendingAttempt}
+              placeholder="e.g. Alex (ticket # becomes token)" autoComplete="off" onChange={(event) => setCustomerLabel(event.target.value)} />
+          </label>}
+        </div>
+        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
           <section className="min-w-0" aria-label="Menu">
-            <div className="sticky top-0 z-10 -mx-4 bg-[var(--paper)] px-4 py-2 sm:mx-0 sm:rounded-xl sm:px-3 xl:static">
+            <div className="sticky top-0 z-10 -mx-4 bg-[var(--paper)] px-4 py-2 sm:mx-0 sm:rounded-xl sm:px-0 lg:static">
               <div className="flex items-end gap-2">
-                <label className="min-w-0 flex-1 text-sm font-semibold">Search dishes
-                  <input id="dish-search" type="search" className="field mt-1 min-h-11" placeholder="Search the menu" value={search}
+                <label className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wider text-[var(--ink-soft)]">Search dishes
+                  <input id="dish-search" type="search" className="field mt-1 min-h-11 text-sm text-[var(--ink)]" placeholder="Search the menu" value={search}
                     disabled={loading || !!loadError || !!pendingAttempt} onChange={(e) => setSearch(e.target.value)} />
                 </label>
-                <a href="#current-ticket" className="btn btn-ink min-h-11 shrink-0 xl:hidden">
+                <a href="#current-ticket" className="btn btn-ink min-h-11 shrink-0 lg:hidden">
                   Ticket{count > 0 ? ` (${count})` : ""}
                 </a>
               </div>
@@ -262,32 +302,34 @@ export default function TakeOrderPage() {
                   {group.items.map((item) => <button key={item.id} type="button" disabled={!!pendingAttempt}
                     className="card flex min-h-16 scroll-mt-24 items-start justify-between gap-3 p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60"
                     onClick={() => {
-                      if (item.modifiers.length) {
+                      if (item.modifiers.length || item.modifierGroups?.length) {
                         setSelected(item);
                         setModifiers([]);
                       } else addItem(item, []);
                     }}>
                     <span className="min-w-0 break-words"><strong className="block">{item.name}</strong>
-                      {item.modifiers.length ? <small className="text-[var(--ink-soft)]">Choose options</small> : null}</span>
+                      {item.modifiers.length || item.modifierGroups?.length ? <small className="text-[var(--ink-soft)]">Choose options</small> : null}</span>
                     <span className="shrink-0 text-sm font-semibold tabular-nums">{money(item.priceMinor)}</span>
                   </button>)}
                 </div>
               </section>)}
             </div>
           </section>
-          <aside id="current-ticket" tabIndex={-1} aria-labelledby="ticket-heading" className="card min-w-0 p-4 sm:p-5 xl:sticky xl:top-5 xl:max-h-[calc(100dvh-2.5rem)] xl:overflow-y-auto">
+          <aside id="current-ticket" tabIndex={-1} aria-labelledby="ticket-heading" className="card min-w-0 p-4 sm:p-5 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="ticket-heading" className="display text-2xl">Current ticket</h2>
-              <a href="#dish-search" className="py-2 text-sm underline xl:hidden">Back to dishes</a>
+              <a href="#dish-search" className="py-2 text-sm underline lg:hidden">Back to dishes</a>
             </div>
             <p className="mt-1 text-sm text-[var(--ink-soft)]" aria-live="polite">
-              {currentTable ? `Table ${currentTable.tableNumber}${currentTable.label ? ` · ${currentTable.label}` : ""}` : "No table selected"}
+              {activeFulfillmentType === "takeaway"
+                ? customerLabel.trim() ? `Takeaway · ${customerLabel.trim()}` : "Takeaway · pickup name needed"
+                : currentTable ? `Table ${currentTable.tableNumber}${currentTable.label ? ` · ${currentTable.label}` : ""}` : "No table selected"}
               {count > 0 ? ` · ${count} ${count === 1 ? "item" : "items"}` : ""}
             </p>
             {error ? <p className="mt-3 rounded-xl bg-[#f3d0c8] p-3 text-sm" role="alert">{error}</p> : null}
             {sent ? <div className="mt-3 rounded-xl border border-[var(--rule)] p-3 text-sm">
               <p role="status">
-                <strong>Ticket #{sent.orderNumber} · Table {sent.tableNumber}</strong>
+                <strong>Ticket #{sent.orderNumber} · {sent.fulfillmentType === "takeaway" ? `Takeaway · ${sent.customerLabel}` : `Table ${sent.tableNumber}`}</strong>
                 {" — "}{ticketSyncDelayed ? `${ticketStatusLabel(sent.status)} (last known)` : ticketStatusLabel(sent.status)}
                 {sent.status === "cancelled" && sent.rejectionReason ? ` — ${sent.rejectionReason}` : ""}
               </p>
@@ -295,11 +337,12 @@ export default function TakeOrderPage() {
                 : isAwaitingKitchen(sent, now) ? <p role="alert" className="mt-1 text-[var(--chili)]">Still awaiting acceptance. Check with the kitchen.</p> : null}
               <div className="mt-1 flex flex-wrap gap-x-4">
                 <Link href="/app" className="inline-flex min-h-11 items-center underline">View floor tickets</Link>
+                <button type="button" className="inline-flex min-h-11 items-center underline" onClick={() => setPrintOrder(sent)}>Print bill</button>
                 {!count && !pendingAttempt ? <a href="#table-picker" className="inline-flex min-h-11 items-center underline">Start next ticket</a> : null}
               </div>
             </div> : null}
             {pendingAttempt && !busy ? <p className="mt-3 rounded-xl bg-[#fff4d6] p-3 text-sm" role="status">
-              Order confirmation is uncertain. Retry the same ticket before starting another.
+              Confirmation pending. Check with the kitchen before writing this ticket on paper. Use Retry to check the same ticket when you reconnect.
             </p> : null}
             {!pendingAttempt && count === 0 ? <p className="mt-3 text-sm text-[var(--ink-soft)]">Tap a dish to add it.</p> : null}
             <ul className="mt-3 space-y-3">
@@ -316,10 +359,10 @@ export default function TakeOrderPage() {
             </ul>
             {count > 0 && <>
               <details className="mt-3">
-                <summary className="cursor-pointer py-3 text-sm font-semibold">Guest name and kitchen note</summary>
-                <label className="block text-sm">Guest name <span className="text-[var(--ink-soft)]">(optional)</span>
+                <summary className="cursor-pointer py-3 text-sm font-semibold">{activeFulfillmentType === "takeaway" ? "Kitchen note" : "Guest name and kitchen note"}</summary>
+                {activeFulfillmentType === "dine_in" ? <label className="block text-sm">Guest name <span className="text-[var(--ink-soft)]">(optional)</span>
                   <input className="field mt-1" value={customerLabel} disabled={!!pendingAttempt} onChange={(e) => setCustomerLabel(e.target.value)} />
-                </label>
+                </label> : null}
                 <label className="mt-2 block text-sm">Kitchen note <span className="text-[var(--ink-soft)]">(optional)</span>
                   <textarea className="field mt-1" rows={2} value={note} disabled={!!pendingAttempt} onChange={(e) => setNote(e.target.value)} />
                 </label>
@@ -331,10 +374,11 @@ export default function TakeOrderPage() {
                 <span>{venue?.taxLabel}{venue?.taxInclusive ? " included" : ""}</span><span>{money(totals.taxMinor)}</span>
               </p> : null}
               <p className="mt-2 flex justify-between gap-2 font-semibold"><span>Ticket total</span><span>{money(totals.totalMinor)}</span></p>
-              {!currentTable && !pendingAttempt ? <a href="#table-picker" className="mt-3 inline-block py-2 text-sm underline">Choose a table to send this ticket</a> : null}
+              {activeFulfillmentType === "dine_in" && !currentTable && !pendingAttempt ? <a href="#table-picker" className="mt-3 inline-block py-2 text-sm underline">Choose a table to send this ticket</a> : null}
+              {activeFulfillmentType === "takeaway" && !customerLabel.trim() && !pendingAttempt ? <a href="#pickup-name" className="mt-3 inline-block py-2 text-sm underline">Add a pickup name to send this ticket</a> : null}
             </>}
-            <button type="button" className="btn btn-chili mt-4 min-h-11 w-full py-3" disabled={busy || (!pendingAttempt && (!currentTable || !count))} onClick={send}>
-              {busy ? "Sending…" : pendingAttempt ? "Retry same ticket" : currentTable ? `Send Table ${currentTable.tableNumber} to kitchen` : "Send to kitchen"}
+            <button type="button" className="btn btn-chili mt-4 min-h-11 w-full py-3" disabled={busy || (!pendingAttempt && (!count || (activeFulfillmentType === "dine_in" ? !currentTable : !customerLabel.trim())))} onClick={send}>
+              {busy ? "Sending…" : pendingAttempt ? "Retry same ticket" : activeFulfillmentType === "takeaway" ? "Send takeaway to kitchen" : currentTable ? `Send Table ${currentTable.tableNumber} to kitchen` : "Send to kitchen"}
             </button>
           </aside>
         </div>
@@ -343,20 +387,18 @@ export default function TakeOrderPage() {
             <h2 id="dish-options-heading" className="display text-2xl">{selected.name}</h2>
             {selected.description ? <p className="mt-2 text-sm text-[var(--ink-soft)]">{selected.description}</p> : null}
             <div className="mt-4 space-y-3">
-              {selected.modifiers.map((mod) => <label key={mod.id} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[var(--radius-sm)] border border-[var(--rule)] px-3 text-sm">
-                <input type="checkbox" checked={modifiers.includes(mod.id)} onChange={(e) => setModifiers((current) =>
-                  e.target.checked ? [...current, mod.id] : current.filter((id) => id !== mod.id))} />
-                <span className="flex-1">{mod.name}</span>
-                <span>{mod.priceAdjustmentMinor ? money(mod.priceAdjustmentMinor) : ""}</span>
-              </label>)}
+              <ModifierPicker item={selected} selected={modifiers} onChange={setModifiers} money={money} />
             </div>
             <div className="mt-5 flex gap-2">
               <button type="button" className="btn btn-ghost min-h-11" onClick={() => dialog.current?.close()}>Cancel</button>
-              <button type="button" className="btn btn-ink min-h-11 flex-1" onClick={() => { addItem(selected, modifiers); dialog.current?.close(); }}>
+              <button type="button" disabled={!!modifierSelectionError(selected.modifierGroups ?? [], selected.modifiers, modifiers)} className="btn btn-ink min-h-11 flex-1" onClick={() => { addItem(selected, modifiers); dialog.current?.close(); }}>
                 Add item · {money(selected.priceMinor + optionCost(selected, modifiers))}
               </button>
             </div>
         </dialog> : null}
+        <ThermalPrintSheet order={printOrder} restaurant={venue} kind="bill" onDone={finishPrinting} />
+        </>
+        )}
       </div>
   );
 }

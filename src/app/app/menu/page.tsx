@@ -1,10 +1,14 @@
 "use client";
 
 import { PageHeader } from "@/components/ui";
+import { ModifierGroupEditor } from "@/components/modifier-group-editor";
 import { api, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { MenuCategory, MenuItem, Restaurant } from "@/lib/types";
 import { FormEvent, useEffect, useState } from "react";
+
+const fetchMenu = (token: string, signal?: AbortSignal) =>
+  api<{ categories: MenuCategory[]; items: MenuItem[] }>("/menu", { token, signal });
 
 export default function MenuPage() {
   const [token, setToken] = useState<string | null>(null);
@@ -24,11 +28,9 @@ export default function MenuPage() {
   const [loaded, setLoaded] = useState(false);
   const [setup, setSetup] = useState(false);
 
-  async function reload(current = token) {
-    if (!current) return;
-    const menu = await api<{ categories: MenuCategory[]; items: MenuItem[] }>("/menu", {
-      token: current,
-    });
+  async function reload() {
+    if (!token) return;
+    const menu = await fetchMenu(token);
     setCategories(menu.categories);
     setItems(menu.items);
     setLoaded(true);
@@ -36,11 +38,22 @@ export default function MenuPage() {
 
   useEffect(() => {
     const t = getToken();
-    setToken(t);
     if (!t) return;
-    api<Restaurant>("/restaurant", { token: t }).then(setRestaurant);
-    reload(t).catch(() => setLoaded(true));
-    setSetup(new URLSearchParams(window.location.search).get("setup") === "1");
+    const controller = new AbortController();
+    const wantsSetup = new URLSearchParams(window.location.search).get("setup") === "1";
+    void api<Restaurant>("/restaurant", { token: t, signal: controller.signal }).then(setRestaurant).catch(() => undefined);
+    void fetchMenu(t, controller.signal).then((menu) => {
+      setCategories(menu.categories);
+      setItems(menu.items);
+    }).catch((failure) => {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "Could not load the menu.");
+    }).finally(() => {
+      if (controller.signal.aborted) return;
+      setLoaded(true);
+      setToken(t);
+      setSetup(wantsSetup);
+    });
+    return () => controller.abort();
   }, []);
 
   async function importMenu(e: FormEvent) {
@@ -177,6 +190,7 @@ export default function MenuPage() {
         </div>
 
         <aside className="space-y-6">
+          {token && <ModifierGroupEditor items={items} token={token} currency={currency} reload={reload} />}
           <form onSubmit={addCategory} className="card p-4">
             <h3 className="font-semibold">Add category</h3>
             <input

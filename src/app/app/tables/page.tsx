@@ -172,13 +172,22 @@ export default function TablesPage() {
   }
 
   return <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
-    <PageHeader title="Tables & QR" copy="Organize tables by area and set up a guest QR for each table." />
-    {loading ? <p className="mt-5 text-sm" role="status">Loading tables…</p> : null}
+    <PageHeader kicker="QR & Floor" title="Tables & QR" copy="Organize tables by area and set up a guest QR for each table." />
+    {loading ? (
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="skeleton h-16 rounded-2xl" />
+          ))}
+        </div>
+        <div className="skeleton h-80 rounded-2xl" />
+      </div>
+    ) : null}
     {loadError ? <div className="card mt-5 flex flex-wrap items-center gap-3 p-4">
       <p role="alert">{loadError}</p>
       <button type="button" className="btn btn-ghost min-h-11" disabled={loading} onClick={() => { setLoading(true); void load(); }}>Try again</button>
     </div> : null}
-    {!loading && restaurant ? <div className="mt-6 grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+    {!loading && restaurant ? <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
       <section className="min-w-0" aria-label="Venue tables">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
           <label className="block w-full max-w-xs text-sm font-semibold">Area

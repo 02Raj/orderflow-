@@ -16,12 +16,22 @@ export interface Restaurant {
   orderingPaused: boolean;
   openingTime: string | null;
   closingTime: string | null;
+  kitchenTargetMinutes?: number | null;
+  kitchenUrgentMinutes?: number | null;
 }
 
 export interface MenuModifier {
   id: string;
   name: string;
   priceAdjustmentMinor: number;
+  groupId?: string | null;
+}
+
+export interface ModifierGroup {
+  id: string;
+  name: string;
+  minChoices: number;
+  maxChoices: number;
 }
 
 export interface MenuItem {
@@ -34,6 +44,7 @@ export interface MenuItem {
   unavailableReason: string | null;
   imageUrl?: string | null;
   modifiers: MenuModifier[];
+  modifierGroups?: ModifierGroup[];
 }
 
 export interface MenuCategory {
@@ -66,17 +77,21 @@ export interface Order {
   id: string;
   orderNumber: number;
   status: string;
+  fulfillmentType: "dine_in" | "takeaway";
   customerLabel: string | null;
   tableNumber: number | null;
   tableLabel: string | null;
   tableId: string | null;
   totalMinor: number;
+  paidMinor: number;
+  correctionSummary: string | null;
   taxMinor: number;
   subtotalMinor: number;
   note: string | null;
   rejectionReason?: string | null;
   createdAt: string;
   updatedAt: string;
+  servedAt?: string | null;
   elapsedSeconds: number;
   items: OrderItem[];
 }

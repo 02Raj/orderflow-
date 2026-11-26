@@ -22,6 +22,8 @@ export interface Restaurant {
   orderingPaused: boolean;
   openingTime: string | null;
   closingTime: string | null;
+  kitchenTargetMinutes: number | null;
+  kitchenUrgentMinutes: number | null;
 }
 
 const SELECT = `
@@ -41,7 +43,9 @@ const SELECT = `
          address,
          ordering_paused as "orderingPaused",
          opening_time as "openingTime",
-         closing_time as "closingTime"
+         closing_time as "closingTime",
+         kitchen_target_minutes as "kitchenTargetMinutes",
+         kitchen_urgent_minutes as "kitchenUrgentMinutes"
   from restaurants`;
 
 export class RestaurantsService {
@@ -54,6 +58,15 @@ export class RestaurantsService {
     const restaurant = await this.db.one<Restaurant>(`${SELECT} where id = $1`, [id]);
     if (!restaurant) throw new NotFoundException('Restaurant not found');
     return restaurant;
+  }
+
+  async setKitchenTargets(user: AuthenticatedUser, target: number, urgent: number) {
+    if (!Number.isInteger(target) || !Number.isInteger(urgent) || target < 2 || urgent > 45 || urgent < target + 2) {
+      throw new BadRequestException('Use a target of at least 2 minutes and an urgent alert 2 or more minutes later, up to 45 minutes.');
+    }
+    await this.db.query('update restaurants set kitchen_target_minutes = $2, kitchen_urgent_minutes = $3 where id = $1',
+      [user.restaurantId, target, urgent]);
+    return this.findById(user.restaurantId);
   }
 
   async update(user: AuthenticatedUser, patch: Partial<Restaurant>): Promise<Restaurant> {

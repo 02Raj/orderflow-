@@ -38,6 +38,16 @@ create table if not exists users (
 );
 create index if not exists users_restaurant_idx on users (restaurant_id);
 
+create table if not exists password_reset_tokens (
+  id uuid primary key,
+  user_id uuid not null references users (id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists password_reset_tokens_user_idx on password_reset_tokens (user_id);
+
 create table if not exists subscriptions (
   id uuid primary key,
   restaurant_id uuid not null unique references restaurants (id) on delete cascade,
@@ -106,6 +116,7 @@ create table if not exists orders (
   id uuid primary key,
   restaurant_id uuid not null references restaurants (id) on delete cascade,
   table_id uuid references dining_tables (id) on delete set null,
+  fulfillment_type text not null default 'dine_in',
   order_number integer not null,
   business_date date not null,
   channel text not null default 'qr',
@@ -187,16 +198,38 @@ create table if not exists audit_logs (
 create index if not exists audit_logs_restaurant_idx on audit_logs (restaurant_id, created_at);
 
 -- Patches for databases created from the earlier counter-POS schema.
+create table if not exists menu_modifier_groups (
+  id uuid primary key,
+  menu_item_id uuid not null references menu_items (id) on delete cascade,
+  name text not null,
+  min_choices integer not null check (min_choices >= 0),
+  max_choices integer not null check (max_choices > 0 and max_choices >= min_choices),
+  created_at timestamptz not null default now()
+);
+create index if not exists menu_modifier_groups_item_idx on menu_modifier_groups (menu_item_id);
+alter table menu_modifier_groups enable row level security;
+alter table menu_modifiers add column if not exists group_id uuid references menu_modifier_groups (id) on delete cascade;
+alter table users add column if not exists last_login_at timestamptz;
+alter table users add column if not exists session_version integer not null default 0;
+alter table restaurants add column if not exists kitchen_target_minutes integer;
+alter table restaurants add column if not exists kitchen_urgent_minutes integer;
+alter table orders add column if not exists correction_summary text;
+alter table orders add column if not exists tax_rate_snapshot_bp integer;
+alter table orders add column if not exists tax_inclusive_snapshot boolean;
 alter table dining_tables add column if not exists area text;
 alter table restaurants add column if not exists slug text;
 alter table restaurants add column if not exists phone text;
 alter table restaurants add column if not exists address text;
 alter table orders add column if not exists table_id uuid;
+alter table orders add column if not exists fulfillment_type text not null default 'dine_in';
 alter table orders add column if not exists rejection_reason text;
 alter table orders add column if not exists accepted_at timestamptz;
 alter table orders add column if not exists preparing_at timestamptz;
 alter table orders add column if not exists ready_at timestamptz;
 alter table orders add column if not exists served_at timestamptz;
+alter table orders add column if not exists closed_at timestamptz;
+alter table orders add column if not exists voided_at timestamptz;
+alter table orders add column if not exists void_reason text;
 alter table restaurants add column if not exists tax_region text;
 alter table restaurants add column if not exists ordering_paused boolean not null default false;
 alter table restaurants add column if not exists opening_time text;

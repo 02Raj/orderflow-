@@ -1,8 +1,12 @@
 "use client";
 
+import { ModifierPicker } from "@/components/modifier-picker";
+import { modifierSelectionError } from "@/lib/modifiers";
+
 import { ApiError, api, formatMoney } from "@/lib/api";
 import { computeTotals, taxGuestHint } from "@/lib/tax";
 import { MenuCategory, MenuItem, Order } from "@/lib/types";
+type GuestTicket = Pick<Order, "id" | "orderNumber" | "status" | "rejectionReason">;
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -47,13 +51,14 @@ export default function GuestMenuPage() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
-  const [placed, setPlaced] = useState<Order | null>(null);
+  const [placed, setPlaced] = useState<GuestTicket | null>(null);
   const [busy, setBusy] = useState(false);
   const [pop, setPop] = useState(false);
   const [attempt, setAttempt] = useState<PendingAttempt | null>(null);
   const [trackingError, setTrackingError] = useState(false);
   const pendingKey = `orderflow:pending:${params.slug}:${params.token}`;
   const placedKey = `orderflow:placed:${params.slug}:${params.token}`;
+  const placedId = placed?.id;
 
   useEffect(() => {
     api<VenuePayload>(`/public/venues/${params.slug}/tables/${params.token}`)
@@ -62,35 +67,44 @@ export default function GuestMenuPage() {
   }, [params.slug, params.token]);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(pendingKey);
-    if (saved) {
-      try {
-        const pending = JSON.parse(saved) as PendingAttempt;
-        setAttempt(pending);
-        setCart(pending.cart);
-        setName(pending.customerName ?? "");
-        setNote(pending.note ?? "");
-        return;
-      } catch { sessionStorage.removeItem(pendingKey); }
-    }
-    const lastOrderId = sessionStorage.getItem(placedKey);
-    if (lastOrderId) {
-      api<Order>(`/public/venues/${params.slug}/tables/${params.token}/orders/${lastOrderId}`)
-        .then(setPlaced)
-        .catch(() => sessionStorage.removeItem(placedKey));
-    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const saved = sessionStorage.getItem(pendingKey);
+      if (saved) {
+        try {
+          const pending = JSON.parse(saved) as PendingAttempt;
+          setAttempt(pending);
+          setCart(pending.cart);
+          setName(pending.customerName ?? "");
+          setNote(pending.note ?? "");
+          return;
+        } catch { sessionStorage.removeItem(pendingKey); }
+      }
+      const lastOrderId = sessionStorage.getItem(placedKey);
+      if (lastOrderId) {
+        void api<GuestTicket>(`/public/venues/${params.slug}/tables/${params.token}/orders/${lastOrderId}`, { signal: controller.signal })
+          .then(setPlaced)
+          .catch(() => { if (!controller.signal.aborted) sessionStorage.removeItem(placedKey); });
+      }
+    }, 0);
+    return () => { window.clearTimeout(timer); controller.abort(); };
   }, [pendingKey, placedKey, params.slug, params.token]);
 
   useEffect(() => {
-    if (!placed) return;
+    if (!placedId) return;
+    const controller = new AbortController();
     const refresh = () => {
-      api<Order>(`/public/venues/${params.slug}/tables/${params.token}/orders/${placed.id}`)
-        .then((order) => { setPlaced(order); setTrackingError(false); })
-        .catch(() => setTrackingError(true));
+      void api<GuestTicket>(`/public/venues/${params.slug}/tables/${params.token}/orders/${placedId}`, { signal: controller.signal })
+        .then((order) => {
+          if (controller.signal.aborted) return;
+          setPlaced((current) => current?.id === order.id ? order : current);
+          setTrackingError(false);
+        })
+        .catch(() => { if (!controller.signal.aborted) setTrackingError(true); });
     };
     const timer = window.setInterval(refresh, 3000);
-    return () => window.clearInterval(timer);
-  }, [placed?.id, params.slug, params.token]);
+    return () => { window.clearInterval(timer); controller.abort(); };
+  }, [placedId, params.slug, params.token]);
 
   function clearAttempt() {
     if (attempt) {
@@ -165,7 +179,7 @@ export default function GuestMenuPage() {
       };
       setAttempt(request);
       sessionStorage.setItem(pendingKey, JSON.stringify(request));
-      const order = await api<Order>(
+      const order = await api<GuestTicket>(
         `/public/venues/${params.slug}/tables/${params.token}/orders`,
         {
           method: "POST",
@@ -405,7 +419,7 @@ function GuestItem({
         className="flex w-full items-start justify-between gap-3 text-left"
         disabled={disabled}
         onClick={() => {
-          if (item.modifiers.length) setOpen((v) => !v);
+          if (item.modifiers.length || item.modifierGroups?.length) setOpen((v) => !v);
           else onAdd(item, []);
         }}
       >
@@ -432,25 +446,10 @@ function GuestItem({
       </button>
       {open ? (
         <div className="mt-3 space-y-2">
-          {item.modifiers.map((mod) => (
-            <label key={mod.id} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={mods.includes(mod.id)}
-                onChange={(e) =>
-                  setMods((prev) =>
-                    e.target.checked ? [...prev, mod.id] : prev.filter((id) => id !== mod.id),
-                  )
-                }
-              />
-              {mod.name}
-              {mod.priceAdjustmentMinor
-                ? ` (${formatMoney(mod.priceAdjustmentMinor, currency, locale)})`
-                : ""}
-            </label>
-          ))}
+          <ModifierPicker item={item} selected={mods} onChange={setMods} money={(minor) => formatMoney(minor, currency, locale)} />
           <button
             className="btn btn-ink px-3 py-2 text-xs"
+            disabled={disabled || !!modifierSelectionError(item.modifierGroups ?? [], item.modifiers, mods)}
             onClick={() => {
               onAdd(item, mods);
               setOpen(false);

@@ -1,11 +1,13 @@
-import { BadRequestException, NotFoundException } from '../errors';
+import { BadRequestException, ForbiddenException, NotFoundException } from '../errors';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService, type QueryClient } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { isOrderingOpen, RestaurantsService } from '../restaurants/restaurants.service';
-import { AuthenticatedUser, OrderStatus } from '../common/types';
+import { AuthenticatedUser, FulfillmentType, OrderStatus } from '../common/types';
 import { computeTotals } from '../common/money';
+import { modifierSelectionError } from '../../lib/modifiers';
+import type { ModifierGroup } from '../../lib/types';
 
 export interface CreateOrderLine {
   menuItemId: string;
@@ -16,7 +18,8 @@ export interface CreateOrderLine {
 
 export interface GuestOrderInput {
   restaurantId: string;
-  tableId: string;
+  tableId?: string | null;
+  fulfillmentType?: FulfillmentType;
   clientRef: string;
   customerLabel?: string | null;
   note?: string | null;
@@ -45,63 +48,29 @@ export class OrdersService {
     );
     if (existing) return this.findById(input.restaurantId, existing.id);
 
-    const table = await this.db.one<{ id: string; table_number: number }>(
-      'select id, table_number from dining_tables where id = $1 and restaurant_id = $2 and is_active = true',
-      [input.tableId, input.restaurantId],
-    );
-    if (!table) throw new BadRequestException('That table is not taking orders');
+    const fulfillmentType = input.fulfillmentType ?? 'dine_in';
+    if (!['dine_in', 'takeaway'].includes(fulfillmentType)) throw new BadRequestException('Select a valid order type');
+    const table = input.tableId
+      ? await this.db.one<{ id: string; table_number: number }>(
+          'select id, table_number from dining_tables where id = $1 and restaurant_id = $2 and is_active = true',
+          [input.tableId, input.restaurantId],
+        )
+      : null;
+    if (fulfillmentType === 'dine_in' && !table) throw new BadRequestException('Choose an active table');
+    if (fulfillmentType === 'takeaway' && !input.customerLabel?.trim()) {
+      throw new BadRequestException('Add a customer name for takeaway');
+    }
 
     const restaurant = await this.restaurants.findById(input.restaurantId);
     if (input.channel !== 'staff' && !isOrderingOpen(restaurant)) {
       throw new BadRequestException('This venue is not taking QR orders right now');
     }
-    const resolvedLines: Array<{
-      menuItemId: string;
-      name: string;
-      unitPriceMinor: number;
-      quantity: number;
-      note: string | null;
-      modifiers: Array<{ id: string; name: string; price_adjustment_minor: number }>;
-    }> = [];
+    const resolvedLines: Awaited<ReturnType<OrdersService['resolveLine']>>[] = [];
     let gross = 0;
-
     for (const line of input.lines) {
-      const item = await this.db.one<{
-        id: string;
-        name: string;
-        price_minor: number;
-        is_available: boolean;
-        archived_at: string | null;
-      }>(
-        'select id, name, price_minor, is_available, archived_at from menu_items where id = $1 and restaurant_id = $2',
-        [line.menuItemId, input.restaurantId],
-      );
-      if (!item || item.archived_at || !item.is_available) {
-        throw new BadRequestException('One of the items is no longer available');
-      }
-
-      const modifiers = line.modifierIds?.length
-        ? await this.db.many<{ id: string; name: string; price_adjustment_minor: number }>(
-            `select id, name, price_adjustment_minor from menu_modifiers
-             where menu_item_id = $1 and is_active = true and id = any($2::uuid[])`,
-            [item.id, line.modifierIds],
-          )
-        : [];
-
-      if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) {
-        throw new BadRequestException('Quantity must be between 1 and 99');
-      }
-      const quantity = line.quantity;
-      const unit = item.price_minor + modifiers.reduce((sum, m) => sum + m.price_adjustment_minor, 0);
-      gross += unit * quantity;
-      resolvedLines.push({
-        menuItemId: item.id,
-        name: item.name,
-        unitPriceMinor: unit,
-        quantity,
-        note: line.note ?? null,
-        modifiers,
-      });
+      const resolved = await this.resolveLine(input.restaurantId, line);
+      resolvedLines.push(resolved);
+      gross += resolved.unitPriceMinor * resolved.quantity;
     }
 
     const totals = computeTotals(gross, {
@@ -127,52 +96,32 @@ export class OrdersService {
           [input.restaurantId, businessDate],
         );
         await tx.query(
-      `insert into orders (id, restaurant_id, table_id, order_number, business_date, channel, status,
+      `insert into orders (id, restaurant_id, table_id, fulfillment_type, order_number, business_date, channel, status,
                            customer_label, subtotal_minor, tax_minor, total_minor, paid_minor,
-                           note, client_ref, created_at)
-       values ($1, $2, $3, $4, $5, $6, 'new', $7, $8, $9, $10, 0, $11, $12, $13)`,
+                           note, client_ref, created_at, tax_rate_snapshot_bp, tax_inclusive_snapshot)
+       values ($1, $2, $3, $4, $5, $6, $7, 'new', $8, $9, $10, $11, 0, $12, $13, $14, $15, $16)`,
       [
         orderId,
         input.restaurantId,
-        input.tableId,
+        table?.id ?? null,
+        fulfillmentType,
         counter!.last_number,
         businessDate,
         input.channel ?? 'qr',
-        input.customerLabel?.trim() || `Table ${table.table_number}`,
+        input.customerLabel?.trim() || `Table ${table!.table_number}`,
         totals.subtotalMinor,
         totals.taxMinor,
         totals.totalMinor,
         input.note ?? null,
         input.clientRef,
         createdAt.toISOString(),
+        restaurant.taxRateBp,
+        restaurant.taxInclusive,
       ],
         );
 
         for (const line of resolvedLines) {
-      const orderItemId = randomUUID();
-      await tx.query(
-        `insert into order_items (id, order_id, restaurant_id, menu_item_id, name_snapshot,
-                                  unit_price_minor, quantity, line_total_minor, note, status)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
-        [
-          orderItemId,
-          orderId,
-          input.restaurantId,
-          line.menuItemId,
-          line.name,
-          line.unitPriceMinor,
-          line.quantity,
-          line.unitPriceMinor * line.quantity,
-          line.note,
-        ],
-      );
-      for (const modifier of line.modifiers) {
-        await tx.query(
-          `insert into order_item_modifiers (id, order_item_id, modifier_name, price_adjustment_minor)
-           values ($1, $2, $3, $4)`,
-          [randomUUID(), orderItemId, modifier.name, modifier.price_adjustment_minor],
-        );
-      }
+          await this.insertLine(tx, input.restaurantId, orderId, randomUUID(), line);
         }
       });
     } catch (error) {
@@ -195,12 +144,252 @@ export class OrdersService {
     return saved;
   }
 
-  async createStaffOrder(user: AuthenticatedUser, input: GuestOrderInput & { tableId: string }) {
+  private async resolveLine(restaurantId: string, line: CreateOrderLine) {
+    const ids = line.modifierIds ?? [];
+    if (!Array.isArray(ids) || ids.length > 200 || ids.some((id) => typeof id !== 'string') || ids.length !== new Set(ids).size) {
+      throw new BadRequestException('Choose each item option at most once.');
+    }
+    const item = await this.db.one<{
+      id: string;
+      name: string;
+      price_minor: number;
+      is_available: boolean;
+      archived_at: string | null;
+      groups: ModifierGroup[];
+      options: { id: string; name: string; groupId: string | null; price_adjustment_minor: number }[];
+    }>(
+      `select i.id, i.name, i.price_minor, i.is_available, i.archived_at,
+         coalesce((select json_agg(json_build_object('id', g.id, 'name', g.name, 'minChoices', g.min_choices, 'maxChoices', g.max_choices))
+                   from menu_modifier_groups g where g.menu_item_id = i.id), '[]'::json) as groups,
+         coalesce((select json_agg(json_build_object('id', m.id, 'name', m.name, 'groupId', m.group_id,
+                   'price_adjustment_minor', m.price_adjustment_minor) order by m.name, m.id)
+                   from menu_modifiers m where m.menu_item_id = i.id and m.is_active), '[]'::json) as options
+       from menu_items i where i.id = $1 and i.restaurant_id = $2`,
+      [line.menuItemId, restaurantId],
+    );
+    if (!item || item.archived_at || !item.is_available) {
+      throw new BadRequestException('One of the items is no longer available');
+    }
+
+    const modifiers = item.options.filter((option) => ids.includes(option.id));
+    if (modifiers.length !== ids.length) {
+      throw new BadRequestException('An option is no longer available. Review the item options and try again.');
+    }
+    const invalid = modifierSelectionError(item.groups, item.options, ids);
+    if (invalid) throw new BadRequestException(`${item.name} · ${invalid}`);
+    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) {
+      throw new BadRequestException('Quantity must be between 1 and 99');
+    }
+    const quantity = line.quantity;
+    const unit = item.price_minor + modifiers.reduce((sum, m) => sum + m.price_adjustment_minor, 0);
+    return {
+      menuItemId: item.id,
+      name: item.name,
+      unitPriceMinor: unit,
+      quantity,
+      note: line.note ?? null,
+      modifiers: modifiers.map((option) => {
+        const group = item.groups.find((entry) => entry.id === option.groupId);
+        return group ? { ...option, name: `${group.name}: ${option.name}` } : option;
+      }),
+    };
+  }
+
+  private async insertLine(
+    tx: QueryClient, restaurantId: string, orderId: string, orderItemId: string,
+    line: Awaited<ReturnType<OrdersService['resolveLine']>>,
+  ) {
+    await tx.query(
+      `insert into order_items (id, order_id, restaurant_id, menu_item_id, name_snapshot,
+                                unit_price_minor, quantity, line_total_minor, note, status)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
+      [
+        orderItemId,
+        orderId,
+        restaurantId,
+        line.menuItemId,
+        line.name,
+        line.unitPriceMinor,
+        line.quantity,
+        line.unitPriceMinor * line.quantity,
+        line.note,
+      ],
+    );
+    for (const modifier of line.modifiers) {
+      await tx.query(
+        `insert into order_item_modifiers (id, order_item_id, modifier_name, price_adjustment_minor)
+         values ($1, $2, $3, $4)`,
+        [randomUUID(), orderItemId, modifier.name, modifier.price_adjustment_minor],
+      );
+    }
+  }
+
+  async createStaffOrder(user: AuthenticatedUser, input: GuestOrderInput) {
     return this.createGuestOrder({ ...input, restaurantId: user.restaurantId, channel: 'staff' });
   }
 
-  async setStatus(user: AuthenticatedUser, orderId: string, status: OrderStatus, reason?: string) {
+  async correctItem(user: AuthenticatedUser, orderId: string, itemId: string, patch: {
+    quantity: number; expectedQuantity: number; reason: string;
+  }, addedLine?: CreateOrderLine) {
+    const reason = typeof patch.reason === 'string' ? patch.reason.trim() : '';
+    if (!reason || reason.length > 160 || !Number.isInteger(patch.quantity) || patch.quantity < 0 || patch.quantity > 99) {
+      throw new BadRequestException('Set a quantity from 0 to 99 and enter a correction reason.');
+    }
+    const addition = addedLine ? await this.resolveLine(user.restaurantId, addedLine) : null;
+    const restaurant = await this.restaurants.findById(user.restaurantId);
+    const summary = await this.db.transaction(async (tx) => {
+      const order = await tx.one<{ status: string; paid: number; subtotal: number; tax: number; total: number; rate: number | null; inclusive: boolean | null }>(
+        `select status, paid_minor as paid, subtotal_minor as subtotal, tax_minor as tax, total_minor as total,
+                tax_rate_snapshot_bp as rate, tax_inclusive_snapshot as inclusive
+         from orders where id = $1 and restaurant_id = $2 for update`,
+        [orderId, user.restaurantId],
+      );
+      if (!order) throw new NotFoundException('Order not found');
+      if (!['new', 'accepted', 'preparing', 'ready'].includes(order.status) || order.paid > 0) {
+        throw new BadRequestException('Only open, unpaid tickets can be corrected.');
+      }
+      const existing = await tx.one<{ name: string; quantity: number; unit: number }>(
+        'select name_snapshot as name, quantity, unit_price_minor as unit from order_items where id = $1 and order_id = $2',
+        [itemId, orderId],
+      );
+      if (addition && existing) throw new BadRequestException('This item has already been added.');
+      const line = addition ? { name: addition.name, quantity: 0, unit: addition.unitPriceMinor } : existing;
+      if (!line) throw new NotFoundException('Order item not found');
+      if (line.quantity !== patch.expectedQuantity || line.quantity === patch.quantity) {
+        throw new BadRequestException('Quantity is unchanged or has already changed. Refresh the ticket.');
+      }
+      const basket = await tx.one<{ gross: number; count: number }>(
+        'select coalesce(sum(line_total_minor), 0)::int as gross, count(*)::int as count from order_items where order_id = $1',
+        [orderId],
+      );
+      if (!basket || (basket.count === 1 && patch.quantity === 0)) {
+        throw new BadRequestException('Cancel the whole ticket to remove its last item.');
+      }
+      const tax = { taxRateBp: order.rate ?? restaurant.taxRateBp, taxInclusive: order.inclusive ?? restaurant.taxInclusive };
+      const original = computeTotals(basket.gross, tax);
+      if (original.taxMinor !== order.tax || original.subtotalMinor !== order.subtotal || original.totalMinor !== order.total) {
+        throw new BadRequestException('This ticket uses earlier tax settings and cannot be repriced safely.');
+      }
+      const totals = computeTotals(basket.gross + (patch.quantity - line.quantity) * line.unit, tax);
+      if (addition) {
+        await this.insertLine(tx, user.restaurantId, orderId, itemId, addition);
+      } else if (patch.quantity === 0) {
+        await tx.query('delete from order_items where id = $1 and order_id = $2', [itemId, orderId]);
+      } else {
+        await tx.query(
+          `update order_items set quantity = $2, line_total_minor = $2 * unit_price_minor,
+             status = case when $2 > quantity then 'pending' else status end where id = $1`,
+          [itemId, patch.quantity],
+        );
+      }
+      const message = `${line.name}: ${line.quantity} → ${patch.quantity}. ${reason}`;
+      await tx.query(
+        `update orders set subtotal_minor = $2, tax_minor = $3, total_minor = $4,
+           correction_summary = concat_ws(chr(10), nullif(correction_summary, ''), $5::text),
+           status = case when status = 'ready' and $6 then 'preparing' else status end,
+           ready_at = case when status = 'ready' and $6 then null else ready_at end, updated_at = now()
+         where id = $1`,
+        [orderId, totals.subtotalMinor, totals.taxMinor, totals.totalMinor, message, patch.quantity > line.quantity],
+      );
+      return message;
+    });
+    await this.audit.record({
+      restaurantId: user.restaurantId, userId: user.id, action: 'order.item.corrected',
+      entity: 'order', entityId: orderId, metadata: { itemId, summary },
+    });
+    return this.publishUpdate(user.restaurantId, orderId);
+  }
+
+  async addItem(user: AuthenticatedUser, orderId: string, line: CreateOrderLine, itemId: string, reason: string) {
+    if (!line || typeof itemId !== 'string' || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(itemId)) {
+      throw new BadRequestException('Choose a menu item and quantity.');
+    }
+    return this.correctItem(user, orderId, itemId, { quantity: line.quantity, expectedQuantity: 0, reason }, line);
+  }
+
+  async recordPayment(user: AuthenticatedUser, orderId: string, method: string, expectedTotal: number) {
+    if (!['cash', 'card_terminal', 'upi'].includes(method) || !Number.isInteger(expectedTotal) || expectedTotal <= 0) {
+      throw new BadRequestException('Choose a payment method and confirm the ticket total.');
+    }
+    await this.db.transaction(async (tx) => {
+      const order = await tx.one<{ status: string; paid: number; total: number }>(
+        'select status, paid_minor as paid, total_minor as total from orders where id = $1 and restaurant_id = $2 for update',
+        [orderId, user.restaurantId],
+      );
+      if (!order) throw new NotFoundException('Order not found');
+      if (order.paid > 0) throw new BadRequestException('Payment is already recorded for this ticket.');
+      if (order.total !== expectedTotal || !['accepted', 'preparing', 'ready', 'served'].includes(order.status)) {
+        throw new BadRequestException('The ticket has changed. Check the current balance before recording payment.');
+      }
+      await tx.query(
+        'insert into payments (id, order_id, restaurant_id, method, amount_minor, received_by) values ($1, $2, $3, $4, $5, $6)',
+        [randomUUID(), orderId, user.restaurantId, method, expectedTotal, user.id],
+      );
+      await tx.query('update orders set paid_minor = $2, updated_at = now() where id = $1', [orderId, expectedTotal]);
+    });
+    await this.audit.record({
+      restaurantId: user.restaurantId, userId: user.id, action: 'order.payment.recorded',
+      entity: 'order', entityId: orderId, metadata: { method, amountMinor: expectedTotal },
+    });
+    return this.publishUpdate(user.restaurantId, orderId);
+  }
+
+  async reversePayment(user: AuthenticatedUser, orderId: string, reason: unknown, expectedUpdatedAt: unknown) {
+    const note = typeof reason === 'string' ? reason.trim() : '';
+    if (!note || note.length > 160 || typeof expectedUpdatedAt !== 'string' || !Number.isFinite(Date.parse(expectedUpdatedAt))) {
+      throw new BadRequestException('Enter a reason and confirm the current payment.');
+    }
+    const amount = await this.db.transaction(async (tx) => {
+      const order = await tx.one<{ paid: number; updatedAt: string }>(
+        'select paid_minor as paid, updated_at as "updatedAt" from orders where id = $1 and restaurant_id = $2 for update',
+        [orderId, user.restaurantId],
+      );
+      if (!order) throw new NotFoundException('Order not found');
+      if (order.paid <= 0 || new Date(order.updatedAt).getTime() !== Date.parse(expectedUpdatedAt)) {
+        throw new BadRequestException('The ticket changed. Check the current payment before reversing.');
+      }
+      const payment = await tx.one<{ id: string; method: string; amount: number }>(
+        `select id, method, amount_minor as amount from payments where order_id = $1 and amount_minor > 0
+         order by created_at desc, id desc limit 1`, [orderId],
+      );
+      if (!payment || payment.amount !== order.paid) throw new BadRequestException('Payment history needs manual review.');
+      await tx.query(
+        `insert into payments (id, order_id, restaurant_id, method, amount_minor, received_by, reference)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [randomUUID(), orderId, user.restaurantId, payment.method, -order.paid, user.id, `Reversal of ${payment.id}: ${note}`],
+      );
+      await tx.query('update orders set paid_minor = 0, updated_at = now() where id = $1', [orderId]);
+      return order.paid;
+    });
+    await this.audit.record({
+      restaurantId: user.restaurantId, userId: user.id, action: 'order.payment.reversed',
+      entity: 'order', entityId: orderId, metadata: { reason: note, amountMinor: amount },
+    });
+    return this.publishUpdate(user.restaurantId, orderId);
+  }
+
+  private async publishUpdate(restaurantId: string, orderId: string) {
+    const saved = await this.findById(restaurantId, orderId);
+    this.events.emit(`orders:${restaurantId}`, { type: 'updated', order: saved });
+    return saved;
+  }
+
+  async acknowledgeCorrections(user: AuthenticatedUser, orderId: string, summary: unknown) {
+    if (typeof summary !== 'string' || !summary) throw new BadRequestException('Select the corrections you reviewed.');
+    const updated = await this.db.one(
+      `update orders set correction_summary = null, updated_at = now()
+       where id = $1 and restaurant_id = $2 and correction_summary = $3 returning id`,
+      [orderId, user.restaurantId, summary],
+    );
+    if (!updated) throw new BadRequestException('The ticket changed. Review the latest corrections.');
+    return this.publishUpdate(user.restaurantId, orderId);
+  }
+
+  async setStatus(user: AuthenticatedUser, orderId: string, status: OrderStatus, reason?: string, completeItems = false, expectedUpdatedAt?: string) {
     const order = await this.findById(user.restaurantId, orderId);
+    if (status === 'served' && order.fulfillmentType === 'takeaway' && user.role === 'kitchen') {
+      throw new ForbiddenException('Counter staff confirm takeaway handover.');
+    }
     const allowed = allowedTransitions(order.status as OrderStatus);
     if (!allowed.includes(status)) {
       throw new BadRequestException(`Cannot move an order from ${order.status} to ${status}`);
@@ -219,21 +408,36 @@ export class OrdersService {
                 ? 'voided_at'
                 : null;
 
-    const updated = await this.db.query(
-      `update orders
-       set status = $1,
-           updated_at = now(),
-           rejection_reason = coalesce($2, rejection_reason),
-           void_reason = case when $1 = 'cancelled' then $2 else void_reason end
-           ${stamp ? `, ${stamp} = now()` : ''}
-           ${status === 'served' || status === 'cancelled' ? ', closed_at = now()' : ''}
-       where id = $3 and restaurant_id = $4 and status = $5
-       returning id`,
-      [status, reason ?? null, orderId, user.restaurantId, order.status],
-    );
-    if (!updated.rows.length) {
-      throw new BadRequestException('Ticket status changed. Check the latest status and try again.');
-    }
+    await this.db.transaction(async (tx) => {
+      const locked = await tx.one<{ status: string; paid_minor: number; updated_at: string }>(
+        'select status, paid_minor, updated_at from orders where id = $1 and restaurant_id = $2 for update',
+        [orderId, user.restaurantId],
+      );
+      if (!locked || locked.status !== order.status) throw new BadRequestException('Ticket status changed. Check the latest status and try again.');
+      if (status === 'cancelled' && locked.paid_minor > 0) throw new BadRequestException('A paid ticket requires a payment reversal before cancellation.');
+      if (status === 'ready') {
+        if (completeItems === true) {
+          if (new Date(locked.updated_at).getTime() !== Date.parse(expectedUpdatedAt ?? '')) {
+            throw new BadRequestException('Ticket changed. Review its items before marking them ready.');
+          }
+          await tx.query("update order_items set status = 'ready' where order_id = $1", [orderId]);
+        }
+        else if (await tx.one("select id from order_items where order_id = $1 and status <> 'ready' limit 1", [orderId])) {
+          throw new BadRequestException('Finish the remaining items or choose Mark all items ready.');
+        }
+      }
+      await tx.query(
+        `update orders
+         set status = $1,
+             updated_at = now(),
+             rejection_reason = coalesce($2, rejection_reason),
+             void_reason = case when $1 = 'cancelled' then $2 else void_reason end
+             ${stamp ? `, ${stamp} = now()` : ''}
+             ${status === 'served' || status === 'cancelled' ? ', closed_at = now()' : ''}
+         where id = $3 and restaurant_id = $4`,
+        [status, reason ?? null, orderId, user.restaurantId],
+      );
+    });
 
     await this.audit.record({
       restaurantId: user.restaurantId,
@@ -263,11 +467,20 @@ export class OrdersService {
       throw new BadRequestException(`Cannot move an item from ${item.status} to ${status}`);
     }
 
-    await this.db.query(
-      `update order_items set status = $1
-       where id = $2 and order_id = $3 and restaurant_id = $4`,
-      [status, itemId, orderId, user.restaurantId],
-    );
+    await this.db.transaction(async (tx) => {
+      const locked = await tx.one<{ status: string }>(
+        'select status from orders where id = $1 and restaurant_id = $2 for update', [orderId, user.restaurantId],
+      );
+      if (!locked || ['ready', 'served', 'cancelled', 'void'].includes(locked.status)) {
+        throw new BadRequestException('This ticket is no longer accepting item updates.');
+      }
+      const changed = await tx.one(
+        'update order_items set status = $1 where id = $2 and order_id = $3 and status = $4 and quantity = $5 returning id',
+        [status, itemId, orderId, item.status, item.quantity],
+      );
+      if (!changed) throw new BadRequestException('Item changed. Check the ticket and retry.');
+      await tx.query('update orders set updated_at = now() where id = $1', [orderId]);
+    });
 
     await this.audit.record({
       restaurantId: user.restaurantId,
@@ -278,6 +491,31 @@ export class OrdersService {
       metadata: { orderId, from: item.status },
     });
 
+    const saved = await this.findById(user.restaurantId, orderId);
+    this.events.emit(`orders:${user.restaurantId}`, { type: 'updated', order: saved });
+    return saved;
+  }
+
+  async recall(user: AuthenticatedUser, orderId: string) {
+    const updated = await this.db.query(
+      `update orders
+       set status = 'ready', updated_at = now(), served_at = null, closed_at = null
+       where id = $1 and restaurant_id = $2 and status = 'served'
+         and served_at >= now() - interval '30 minutes'
+       returning id`,
+      [orderId, user.restaurantId],
+    );
+    if (!updated.rows.length) {
+      throw new BadRequestException('This ticket is no longer available to recall');
+    }
+    await this.audit.record({
+      restaurantId: user.restaurantId,
+      userId: user.id,
+      action: 'order.recalled',
+      entity: 'order',
+      entityId: orderId,
+      metadata: { from: 'served', to: 'ready' },
+    });
     const saved = await this.findById(user.restaurantId, orderId);
     this.events.emit(`orders:${user.restaurantId}`, { type: 'updated', order: saved });
     return saved;
@@ -319,12 +557,14 @@ export class OrdersService {
 
   async list(
     restaurantId: string,
-    filter: { status?: string; businessDate?: string; limit?: number; activeOnly?: boolean },
+    filter: { status?: string; businessDate?: string; limit?: number; activeOnly?: boolean; recentServed?: boolean },
   ) {
     const conditions = ['o.restaurant_id = $1'];
     const values: unknown[] = [restaurantId];
 
-    if (filter.activeOnly) {
+    if (filter.recentServed) {
+      conditions.push("o.status = 'served' and o.served_at >= now() - interval '30 minutes'");
+    } else if (filter.activeOnly) {
       conditions.push(`o.status in ('new','accepted','preparing','ready')`);
     } else if (filter.status && filter.status !== 'all') {
       values.push(filter.status);
@@ -336,13 +576,14 @@ export class OrdersService {
     }
     let limit = '';
     // Service boards need every open ticket. Cap only history queries.
-    if (!filter.activeOnly) {
+    if (!filter.activeOnly && !filter.recentServed) {
       values.push(Math.min(filter.limit ?? 80, 200));
       limit = ` limit $${values.length}`;
     }
 
+    const sort = filter.recentServed ? 'o.served_at desc' : 'o.created_at desc';
     const orders = await this.db.many<OrderRow>(
-      `${ORDER_SELECT} where ${conditions.join(' and ')} order by o.created_at desc${limit}`,
+      `${ORDER_SELECT} where ${conditions.join(' and ')} order by ${sort}, o.id${limit}`,
       values,
     );
     if (!orders.length) return [];
@@ -408,6 +649,7 @@ interface OrderRow {
   orderNumber: number;
   businessDate: string;
   channel: string;
+  fulfillmentType: FulfillmentType;
   status: string;
   customerLabel: string | null;
   tableId: string | null;
@@ -416,11 +658,14 @@ interface OrderRow {
   subtotalMinor: number;
   taxMinor: number;
   totalMinor: number;
+  paidMinor: number;
+  correctionSummary: string | null;
   note: string | null;
   rejectionReason: string | null;
   clientRef: string;
   createdAt: string;
   updatedAt: string;
+  servedAt: string | null;
   elapsedSeconds: number;
 }
 
@@ -440,6 +685,7 @@ const ORDER_SELECT = `
          o.order_number as "orderNumber",
          o.business_date as "businessDate",
          o.channel,
+         o.fulfillment_type as "fulfillmentType",
          o.status,
          o.customer_label as "customerLabel",
          o.table_id as "tableId",
@@ -448,11 +694,14 @@ const ORDER_SELECT = `
          o.subtotal_minor as "subtotalMinor",
          o.tax_minor as "taxMinor",
          o.total_minor as "totalMinor",
+         o.paid_minor as "paidMinor",
+         o.correction_summary as "correctionSummary",
          o.note,
          o.rejection_reason as "rejectionReason",
          o.client_ref as "clientRef",
          o.created_at as "createdAt",
          o.updated_at as "updatedAt",
+         o.served_at as "servedAt",
          extract(epoch from (now() - o.created_at))::int as "elapsedSeconds"
   from orders o
   left join dining_tables t on t.id = o.table_id`;

@@ -83,6 +83,15 @@ export class ReportsService {
 
   async range(restaurantId: string, from: string, to: string) {
     const restaurant = await this.restaurants.findById(restaurantId);
+    const paymentsByMethod = await this.db.many<{ method: string; netMinor: number; recordedMinor: number; reversedMinor: number }>(
+      `select method, sum(amount_minor)::int as "netMinor",
+              coalesce(sum(amount_minor) filter (where amount_minor > 0), 0)::int as "recordedMinor",
+              coalesce(-sum(amount_minor) filter (where amount_minor < 0), 0)::int as "reversedMinor"
+       from payments
+       where restaurant_id = $1 and (created_at at time zone $4)::date between $2::date and $3::date
+       group by method order by method`,
+      [restaurantId, from, to, restaurant.timezone],
+    );
     const totals = await this.db.one<{
       orderCount: number;
       grossMinor: number;
@@ -143,6 +152,8 @@ export class ReportsService {
     return {
       from,
       to,
+      collectedMinor: paymentsByMethod.reduce((sum, entry) => sum + entry.netMinor, 0),
+      paymentsByMethod,
       currency: restaurant.currency,
       locale: restaurant.locale,
       taxLabel: restaurant.taxLabel,

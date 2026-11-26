@@ -8,13 +8,16 @@ import { clearSession, getToken, getUser, SessionUser } from "@/lib/session";
 import { PAYMENTS_ENABLED } from "@/lib/payments";
 import { BillingStatus, Restaurant } from "@/lib/types";
 import { useOrderStream } from "@/lib/use-order-stream";
+import { playNewOrderSound, playReadyBellSound } from "@/lib/kitchen-sound";
 import { Icons } from "@/components/icons";
+import { OnboardingModal } from "@/components/onboarding-modal";
+import { DemoTourModal } from "@/components/demo-tour-modal";
 
 const NAV = [
   { href: "/app", label: "Floor", icon: Icons.floor, roles: ["owner", "manager", "staff"] },
   { href: "/app/take-order", label: "Take order", icon: Icons.tables, roles: ["owner", "manager", "staff"] },
   { href: "/app/orders", label: "Tickets", icon: Icons.tickets, roles: ["owner", "manager", "staff"] },
-  { href: "/kitchen", label: "Kitchen", icon: Icons.kitchen, roles: ["owner", "manager", "staff", "kitchen"] },
+  { href: "/app/kitchen", label: "Kitchen", icon: Icons.kitchen, roles: ["owner", "manager", "staff", "kitchen"] },
   { href: "/app/menu", label: "Menu", icon: Icons.menu, roles: ["owner", "manager"] },
   { href: "/app/tables", label: "Tables", icon: Icons.tables, roles: ["owner", "manager"] },
   { href: "/app/reports", label: "Reports", icon: Icons.reports, roles: ["owner", "manager"] },
@@ -29,9 +32,23 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [ready, setReady] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [floorBell, setFloorBell] = useState(false);
   const moreDialog = useRef<HTMLDialogElement>(null);
-  const stream = useOrderStream(true);
-  const newCount = stream.orders.filter((o) => o.status === "new").length;
+  const { orders, setOnCreated, setOnStatusChange } = useOrderStream(true);
+  const newCount = orders.filter((o) => o.status === "new").length;
+
+  useEffect(() => {
+    setOnCreated(() => {
+      if (floorBell) playNewOrderSound();
+    });
+    setOnStatusChange((order) => {
+      if (!floorBell) return;
+      if (order.status === "ready" || order.status === "served") {
+        playReadyBellSound();
+      }
+    });
+  }, [floorBell, setOnCreated, setOnStatusChange]);
 
   useEffect(() => {
     const token = getToken();
@@ -66,11 +83,26 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   if (!ready || !user) {
     return (
-      <div className="grid min-h-screen place-items-center">
-        <div className="text-center">
-          <div className="skeleton mx-auto h-10 w-10 rounded-full" />
-          <p className="mt-3 text-sm text-[var(--ink-soft)]">Opening the floor…</p>
-        </div>
+      <div className="min-h-screen md:grid md:grid-cols-[240px_1fr]">
+        <aside className="hidden border-r border-[var(--rule)] bg-[color-mix(in_srgb,var(--paper-2)_88%,white)] p-4 md:block">
+          <div className="skeleton h-3 w-20" />
+          <div className="skeleton mt-2 h-5 w-36" />
+          <div className="skeleton mt-1.5 h-3 w-28" />
+          <div className="mt-8 space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="skeleton h-10 w-full rounded-[12px]" />
+            ))}
+          </div>
+        </aside>
+        <section className="p-6 md:p-8">
+          <div className="skeleton h-4 w-24" />
+          <div className="skeleton mt-2 h-10 w-56" />
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton h-28 rounded-2xl" />
+            ))}
+          </div>
+        </section>
       </div>
     );
   }
@@ -80,7 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom))] md:grid md:grid-cols-[240px_1fr] md:pb-0">
-      <aside className="border-b border-[var(--rule)] bg-[color-mix(in_srgb,var(--paper-2)_88%,white)] md:border-b-0 md:border-r">
+      <aside className="border-b border-[var(--rule)] bg-[color-mix(in_srgb,var(--paper-2)_88%,white)] md:sticky md:top-0 md:h-screen md:overflow-y-auto md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-4 py-4 md:block">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--chili)]">
@@ -91,15 +123,43 @@ export function AppShell({ children }: { children: ReactNode }) {
               {user.fullName} · {user.role}
             </p>
           </div>
-          <button
-            className="text-xs underline md:mt-4"
-            onClick={() => {
-              clearSession();
-              router.push("/");
-            }}
-          >
-            Sign out
-          </button>
+          <div className="flex flex-wrap items-center gap-3 md:mt-4">
+            <button
+              className="text-xs underline"
+              onClick={() => {
+                clearSession();
+                router.push("/");
+              }}
+            >
+              Sign out
+            </button>
+            <button
+              type="button"
+              onClick={() => setTourOpen(true)}
+              className="text-xs font-semibold text-[var(--chili-dark)] underline"
+            >
+              Guided tour
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!floorBell) {
+                  setFloorBell(true);
+                  playReadyBellSound();
+                } else {
+                  setFloorBell(false);
+                }
+              }}
+              className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition ${
+                floorBell
+                  ? "bg-[#cfe3d6] text-[var(--sage)]"
+                  : "border border-[var(--rule)] text-[var(--ink-soft)] hover:text-[var(--ink)]"
+              }`}
+              title="Ring a bell when kitchen marks an order Ready"
+            >
+              {floorBell ? "Pass bell on" : "Pass bell off"}
+            </button>
+          </div>
         </div>
         {PAYMENTS_ENABLED && billing && !billing.accessBlocked && billing.status === "trialing" ? (
           <p className="mx-4 mb-3 rounded-[12px] border border-[#ead7a4] bg-[#fff4d6] px-3 py-2 text-xs">
@@ -142,7 +202,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
       </aside>
-      <section className="min-w-0">{children}</section>
+      <section className="min-w-0">
+        <OnboardingModal />
+        <DemoTourModal
+          userEmail={user.email}
+          externalOpen={tourOpen}
+          onExternalClose={() => setTourOpen(false)}
+        />
+        {children}
+      </section>
       <nav aria-label="Main navigation" className={`fixed inset-x-0 bottom-0 z-30 grid ${moreLinks.length ? "grid-cols-5" : "grid-cols-4"} gap-1 border-t border-[var(--rule)] bg-[var(--ticket)]/95 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden`}>
         {links.slice(0, 4).map((item) => {
           const active = pathname === item.href;

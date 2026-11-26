@@ -42,6 +42,8 @@ export class DatabaseService {
       const pool = new Pool({
         connectionString: url,
         max: Number(process.env.DATABASE_POOL_MAX ?? 5),
+        connectionTimeoutMillis: 15000,
+        idleTimeoutMillis: 30000,
         ssl: url.includes('localhost') ? undefined : { rejectUnauthorized: false },
       });
       this.driver = {
@@ -119,6 +121,10 @@ export class DatabaseService {
 
   private async migrate(): Promise<void> {
     const schema = this.readSql('schema.sql');
+    if (this.mode === 'postgres') {
+      await this.driver.query(schema);
+      return;
+    }
     for (const statement of splitStatements(schema)) {
       await this.driver.query(statement);
     }
