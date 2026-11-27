@@ -56,6 +56,15 @@ const speedFeatures = [
   ["Global Tax Presets", "Built-in VAT, GST, and Sales Tax rules for US, UK, UAE, India, Europe, and Australia."],
 ];
 
+const includedFeatures = [
+  ["Table QR ordering", "Print a QR for each table. Guests order from their phone without downloading an app."],
+  ["Waiter orders and takeaway", "Staff can send dine-in and takeaway tickets to the same kitchen queue."],
+  ["Live kitchen display", "See new tickets, track prep with timers, and spot orders that need attention."],
+  ["Menu and sold-out controls", "Import your menu, add modifiers, and mark dishes sold out during service."],
+  ["Branch-specific staff access", "Give managers, floor staff, and kitchen staff their own logins."],
+  ["Reports and local tax settings", "View sales and top dishes, export CSVs, and configure local currency and tax display."],
+] as const;
+
 const questions = [
   [
     "Does every guest have to scan a QR?",
@@ -273,10 +282,10 @@ export default function HomePage() {
                 Simple, flat pricing
               </p>
               <h2 className="display mt-2 text-3xl tracking-tight sm:text-5xl">
-                From table QR to kitchen screen.
+                QR ordering and kitchen tools in one plan.
               </h2>
               <p className="mt-3 text-base text-[#e4d7c5]">
-                One plan per location. Use the devices you already have. No OrderNFlow commission on orders.
+                Same features with monthly or yearly billing. Use the devices you already have and pay zero OrderNFlow commission on orders.
               </p>
             </div>
 
@@ -291,19 +300,32 @@ export default function HomePage() {
                     </div>
                     <p className="display mt-3 text-4xl">US${price.amount}</p>
                     <p className="mt-1 text-sm text-[#e4d7c5]">Per location, billed every {price.period}.</p>
+                    <div className="mt-5 border-t border-[#514438] pt-5">
+                      <p className="text-sm font-semibold">What&apos;s included</p>
+                      <ul className="mt-3 space-y-3 text-sm">
+                        {includedFeatures.map(([feature, detail]) => (
+                          <li key={feature} className="flex items-start gap-2.5">
+                            <span aria-hidden="true" className="shrink-0 font-semibold text-[#edb39f]">✓</span>
+                            <div>
+                              <p className="font-semibold">{feature}</p>
+                              <p className="mt-0.5 leading-relaxed text-[#e4d7c5]">{detail}</p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
                 );
               })}
             </div>
             <div className="mt-6 rounded-2xl border border-[#3a3129] bg-[#1c1713] p-6">
-              <h3 className="display text-2xl">Included with both billing options</h3>
-              <ul className="mt-4 grid gap-3 text-sm text-[#e4d7c5] sm:grid-cols-2">
-                <li>Table QR codes and guest ordering</li>
-                <li>Waiter order-taking and a shared live kitchen board</li>
-                <li>Staff roles, kitchen timers and overdue ticket alerts</li>
-                <li>Sales reports, CSV export and configurable local tax display</li>
-              </ul>
-              <p className="mt-5 text-sm text-[#e4d7c5]">For high-volume service, QR and waiter orders feed the same kitchen queue so the floor can see which tickets still need attention.</p>
+              <h3 className="display text-2xl">Multiple locations, one owner login</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[#e4d7c5]">
+                Add branches and switch between them from one account. Each location keeps its own menu, table QR codes, kitchen queue, staff access, reports, and subscription.
+              </p>
+              <p className="mt-3 text-sm font-semibold">
+                Two locations cost US${BILLING_PRICES.monthly.amount * 2}/month or US${BILLING_PRICES.yearly.amount * 2}/year when both use the same billing cycle.
+              </p>
             </div>
             <Link href="/signup" className="btn btn-chili mt-6 px-8 py-3">Start free trial</Link>
             {!PAYMENTS_ENABLED && <p className="mt-3 text-sm text-[#c9b89a]">Paid subscriptions open after early access.</p>}
