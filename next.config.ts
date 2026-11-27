@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@electric-sql/pglite", "pg", "bcryptjs", "stripe"],
   outputFileTracingIncludes: {
     "/api/**/*": ["./src/server/database/*.sql"],
+    "/api/[...path]": ["./src/server/database/*.sql"],
   },
   async headers() {
     return [

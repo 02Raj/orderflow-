@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export type QueryResult<T> = { rows: T[]; rowCount: number };
@@ -120,11 +120,17 @@ export class DatabaseService {
   }
 
   private async migrate(): Promise<void> {
-    const schema = this.readSql('schema.sql');
     if (this.mode === 'postgres') {
-      await this.driver.query(schema);
+      const existing = await this.one<{ tbl: string | null }>(
+        "select to_regclass('public.billing_webhook_events')::text as tbl",
+      );
+      if (existing?.tbl) return;
+      const candidate = join(process.cwd(), 'src', 'server', 'database', 'schema.sql');
+      if (!existsSync(candidate)) return;
+      await this.driver.query(readFileSync(/* turbopackIgnore: true */ candidate, 'utf8'));
       return;
     }
+    const schema = this.readSql('schema.sql');
     for (const statement of splitStatements(schema)) {
       await this.driver.query(statement);
     }
