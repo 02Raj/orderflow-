@@ -4,10 +4,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
+import { NextRequest } from 'next/server';
 import { AuditService } from '../src/server/audit/audit.service';
 import { AuthService } from '../src/server/auth/auth.service';
 import { BillingService } from '../src/server/billing/billing.service';
 import { DatabaseService } from '../src/server/database/database.service';
+import { dispatch } from '../src/server/dispatch';
 import { Jwt, userFromToken } from '../src/server/jwt';
 import { MenuService } from '../src/server/menu/menu.service';
 import { businessDateFor, OrdersService } from '../src/server/orders/orders.service';
@@ -587,6 +589,105 @@ describe('business locations', () => {
     assert.equal(await auth.sessionIsCurrent(jlt.id, jlt.restaurantId, jlt.sessionVersion), false);
     assert.equal(await auth.sessionIsCurrent(marina.id, marina.restaurantId, marina.sessionVersion), false);
   });
+});
+
+test('rush through the API delivers unique tickets live to the correct branch', async (t) => {
+  // Use the same isolated database for separately dispatched HTTP requests.
+  const processState = globalThis as typeof globalThis & { orderflowDb?: DatabaseService };
+  const previousDb = processState.orderflowDb;
+  processState.orderflowDb = db;
+  t.after(() => { processState.orderflowDb = previousDb; });
+  const primary = await auth.signup({
+    email: 'rush-owner@example.test', password: 'rush-test-password', fullName: 'Rush Owner',
+    restaurantName: 'Rush Marina', countryCode: 'AE',
+  });
+  const branch = await auth.createLocation(await userFromToken(primary.token), { name: 'Rush JLT', countryCode: 'AE' });
+  const secondary = await auth.switchLocation(await userFromToken(primary.token), branch.id);
+  const request = (path: string, token?: string, body?: unknown, method?: string) => {
+    const req = new NextRequest(`http://localhost/api${path}`, {
+      method: method ?? (body === undefined ? 'GET' : 'POST'),
+      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return dispatch(req, req.nextUrl.pathname.slice(5).split('/'));
+  };
+  const perBranch = 24;
+  const branches = [];
+  for (const [index, session] of [primary, secondary].entries()) {
+    const venue = await restaurants.findById(session.user.restaurantId);
+    const [table] = await tables.list(venue.id);
+    const category = await menu.createCategory(session.user, 'Lunch');
+    const lines = [];
+    for (const name of ['Coffee', 'Sandwich', 'Cookie']) {
+      const item = await menu.createItem(session.user, { categoryId: category.id, name, priceMinor: 1000 });
+      lines.push({ menuItemId: item.id, quantity: 1 });
+    }
+    const stream = await request('/orders/stream', session.token);
+    assert.equal(stream.status, 200);
+    const reader = stream.body!.getReader();
+    t.after(() => reader.cancel());
+    assert.match(new TextDecoder().decode((await reader.read()).value), /event: ready/);
+    branches.push({ index, session, venue, table, lines, reader });
+  }
+  const start = performance.now();
+  const collect = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    const arrived: string[] = [];
+    while (arrived.length < perBranch) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const message = decoder.decode(chunk.value);
+      if (!message.startsWith('event: order:created\n')) continue;
+      arrived.push((JSON.parse(message.split('\n')[1].slice(6)) as { id: string }).id);
+    }
+    return arrived;
+  };
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const notifications = Promise.all(branches.map(({ reader }) => collect(reader)));
+    const posts = Promise.all(branches.map(async ({ index, session, venue, table, lines }) => {
+      // Six of the 24 requests per branch are also submitted again at the same time.
+      const send = async (i: number) => {
+        const body = { clientRef: `rush-${index}-${i}`, lines, tableId: table.id };
+        const started = performance.now();
+        const response = i % 2 === 0
+          ? await request(`/public/venues/${venue.slug}/tables/${table.qrToken}/orders`, undefined, body)
+          : await request('/orders', session.token, body);
+        const result = await response.json() as { id: string; message?: string; orderNumber: number };
+        assert.equal(response.status, 200, result.message);
+        return { ...result, ms: performance.now() - started };
+      };
+      return Promise.all([
+        ...Array.from({ length: perBranch }, (_, i) => send(i)),
+        ...Array.from({ length: 6 }, (_, i) => send(i)),
+      ]);
+    }));
+    const timeout = new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('Kitchen stream did not deliver the rush tickets within 15 seconds')), 15000);
+    });
+    const [responses, events] = await Promise.race([Promise.all([posts, notifications]), timeout]);
+    const burstMs = performance.now() - start;
+    for (const [index, { session }] of branches.entries()) {
+      const tickets = responses[index];
+      const ids = new Set(tickets.map(({ id }) => id));
+      assert.equal(ids.size, perBranch);
+      assert.equal(new Set(tickets.map(({ orderNumber }) => orderNumber)).size, perBranch);
+      for (let i = 0; i < 6; i++) assert.equal(tickets[i].id, tickets[perBranch + i].id);
+      assert.equal(events[index].length, perBranch);
+      assert.deepEqual(new Set(events[index]), ids);
+      const snapshot = await request('/orders?active=1', session.token);
+      assert.equal(snapshot.status, 200);
+      const active = await snapshot.json() as { id: string; items: unknown[] }[];
+      assert.deepEqual(new Set(active.map(({ id }) => id)), ids);
+      assert.ok(active.every(({ items }) => items.length === 3));
+      const accepted = await request(`/orders/${tickets[0].id}/status`, session.token, { status: 'accepted' }, 'PATCH');
+      assert.equal(accepted.status, 200);
+    }
+    const latencies = responses.flat().map(({ ms }) => ms).sort((a, b) => a - b);
+    t.diagnostic(`60 concurrent submissions including 12 retries, 48 live tickets across 2 branches in ${Math.round(burstMs)} ms; submit p95 ${Math.round(latencies[Math.ceil(latencies.length * 0.95) - 1])} ms`);
+  } finally {
+    clearTimeout(deadline);
+  }
 });
 
 describe('dodo payments webhook', () => {

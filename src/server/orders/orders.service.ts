@@ -28,18 +28,21 @@ export interface GuestOrderInput {
 }
 
 export class OrdersService {
-  readonly events = new EventEmitter();
+  private static readonly buses = new WeakMap<DatabaseService, EventEmitter>();
+  readonly events: EventEmitter;
 
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly restaurants: RestaurantsService,
   ) {
-    this.events.setMaxListeners(200);
+    const existing = OrdersService.buses.get(db);
+    this.events = existing ?? new EventEmitter().setMaxListeners(200);
+    if (!existing) OrdersService.buses.set(db, this.events);
   }
 
   async createGuestOrder(input: GuestOrderInput) {
-    if (!input.lines?.length) throw new BadRequestException('Add at least one item');
+    if (!Array.isArray(input.lines) || !input.lines.length) throw new BadRequestException('Add at least one item');
     if (!input.clientRef || input.clientRef.length > 120) throw new BadRequestException('Invalid order reference');
 
     const existing = await this.db.one<{ id: string }>(
@@ -65,13 +68,8 @@ export class OrdersService {
     if (input.channel !== 'staff' && !isOrderingOpen(restaurant)) {
       throw new BadRequestException('This venue is not taking QR orders right now');
     }
-    const resolvedLines: Awaited<ReturnType<OrdersService['resolveLine']>>[] = [];
-    let gross = 0;
-    for (const line of input.lines) {
-      const resolved = await this.resolveLine(input.restaurantId, line);
-      resolvedLines.push(resolved);
-      gross += resolved.unitPriceMinor * resolved.quantity;
-    }
+    const resolvedLines = await this.resolveLines(input.restaurantId, input.lines);
+    const gross = resolvedLines.reduce((sum, line) => sum + line.unitPriceMinor * line.quantity, 0);
 
     const totals = computeTotals(gross, {
       taxRateBp: restaurant.taxRateBp,
@@ -80,13 +78,14 @@ export class OrdersService {
     const createdAt = new Date();
     const businessDate = businessDateFor(createdAt, restaurant.timezone);
     const orderId = randomUUID();
+    let committedId: string;
     try {
-      await this.db.transaction(async (tx) => {
+      committedId = await this.db.transaction(async (tx) => {
         const duplicate = await tx.one<{ id: string }>(
           'select id from orders where restaurant_id = $1 and client_ref = $2',
           [input.restaurantId, input.clientRef],
         );
-        if (duplicate) return;
+        if (duplicate) return duplicate.id;
         const counter = await tx.one<{ last_number: number }>(
           `insert into order_counters (restaurant_id, business_date, last_number)
            values ($1, $2, (select coalesce(max(order_number), 0) + 1 from orders where restaurant_id = $1 and business_date = $2))
@@ -120,9 +119,9 @@ export class OrdersService {
       ],
         );
 
-        for (const line of resolvedLines) {
-          await this.insertLine(tx, input.restaurantId, orderId, randomUUID(), line);
-        }
+        await this.insertLines(tx, input.restaurantId, orderId,
+          resolvedLines.map((line) => ({ id: randomUUID(), line })));
+        return orderId;
       });
     } catch (error) {
       const duplicate = await this.db.one<{ id: string }>(
@@ -133,23 +132,22 @@ export class OrdersService {
       throw error;
     }
 
-    const committed = await this.db.one<{ id: string }>(
-      'select id from orders where restaurant_id = $1 and client_ref = $2',
-      [input.restaurantId, input.clientRef],
-    );
-    if (committed?.id !== orderId) return this.findById(input.restaurantId, committed!.id);
+    if (committedId !== orderId) return this.findById(input.restaurantId, committedId);
 
     const saved = await this.findById(input.restaurantId, orderId);
     this.events.emit(`orders:${input.restaurantId}`, { type: 'created', order: saved });
     return saved;
   }
 
-  private async resolveLine(restaurantId: string, line: CreateOrderLine) {
-    const ids = line.modifierIds ?? [];
-    if (!Array.isArray(ids) || ids.length > 200 || ids.some((id) => typeof id !== 'string') || ids.length !== new Set(ids).size) {
-      throw new BadRequestException('Choose each item option at most once.');
-    }
-    const item = await this.db.one<{
+  private async resolveLines(restaurantId: string, lines: CreateOrderLine[]) {
+    const idsByLine = lines.map((line) => {
+      const ids = line.modifierIds ?? [];
+      if (!Array.isArray(ids) || ids.length > 200 || ids.some((id) => typeof id !== 'string') || ids.length !== new Set(ids).size) {
+        throw new BadRequestException('Choose each item option at most once.');
+      }
+      return ids;
+    });
+    const items = await this.db.many<{
       id: string;
       name: string;
       price_minor: number;
@@ -164,64 +162,69 @@ export class OrdersService {
          coalesce((select json_agg(json_build_object('id', m.id, 'name', m.name, 'groupId', m.group_id,
                    'price_adjustment_minor', m.price_adjustment_minor) order by m.name, m.id)
                    from menu_modifiers m where m.menu_item_id = i.id and m.is_active), '[]'::json) as options
-       from menu_items i where i.id = $1 and i.restaurant_id = $2`,
-      [line.menuItemId, restaurantId],
+       from menu_items i where i.id = any($1::uuid[]) and i.restaurant_id = $2`,
+      [[...new Set(lines.map((line) => line.menuItemId))], restaurantId],
     );
-    if (!item || item.archived_at || !item.is_available) {
-      throw new BadRequestException('One of the items is no longer available');
-    }
+    const byId = new Map(items.map((item) => [item.id, item]));
+    return lines.map((line, index) => {
+      const ids = idsByLine[index];
+      const item = byId.get(line.menuItemId.toLowerCase());
+      if (!item || item.archived_at || !item.is_available) {
+        throw new BadRequestException('One of the items is no longer available');
+      }
 
-    const modifiers = item.options.filter((option) => ids.includes(option.id));
-    if (modifiers.length !== ids.length) {
-      throw new BadRequestException('An option is no longer available. Review the item options and try again.');
-    }
-    const invalid = modifierSelectionError(item.groups, item.options, ids);
-    if (invalid) throw new BadRequestException(`${item.name} · ${invalid}`);
-    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) {
-      throw new BadRequestException('Quantity must be between 1 and 99');
-    }
-    const quantity = line.quantity;
-    const unit = item.price_minor + modifiers.reduce((sum, m) => sum + m.price_adjustment_minor, 0);
-    return {
-      menuItemId: item.id,
-      name: item.name,
-      unitPriceMinor: unit,
-      quantity,
-      note: line.note ?? null,
-      modifiers: modifiers.map((option) => {
-        const group = item.groups.find((entry) => entry.id === option.groupId);
-        return group ? { ...option, name: `${group.name}: ${option.name}` } : option;
-      }),
-    };
+      const modifiers = item.options.filter((option) => ids.includes(option.id));
+      if (modifiers.length !== ids.length) {
+        throw new BadRequestException('An option is no longer available. Review the item options and try again.');
+      }
+      const invalid = modifierSelectionError(item.groups, item.options, ids);
+      if (invalid) throw new BadRequestException(`${item.name} · ${invalid}`);
+      if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) {
+        throw new BadRequestException('Quantity must be between 1 and 99');
+      }
+      const quantity = line.quantity;
+      const unit = item.price_minor + modifiers.reduce((sum, m) => sum + m.price_adjustment_minor, 0);
+      return {
+        menuItemId: item.id,
+        name: item.name,
+        unitPriceMinor: unit,
+        quantity,
+        note: line.note ?? null,
+        modifiers: modifiers.map((option) => {
+          const group = item.groups.find((entry) => entry.id === option.groupId);
+          return group ? { ...option, name: `${group.name}: ${option.name}` } : option;
+        }),
+      };
+    });
   }
 
-  private async insertLine(
-    tx: QueryClient, restaurantId: string, orderId: string, orderItemId: string,
-    line: Awaited<ReturnType<OrdersService['resolveLine']>>,
+  private async insertLines(
+    tx: QueryClient, restaurantId: string, orderId: string,
+    items: { id: string; line: Awaited<ReturnType<OrdersService['resolveLines']>>[number] }[],
   ) {
+    const rows = items.map(({ id, line }) => ({
+      id, menu_item_id: line.menuItemId, name: line.name, unit: line.unitPriceMinor,
+      quantity: line.quantity, note: line.note,
+    }));
     await tx.query(
       `insert into order_items (id, order_id, restaurant_id, menu_item_id, name_snapshot,
                                 unit_price_minor, quantity, line_total_minor, note, status)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
-      [
-        orderItemId,
-        orderId,
-        restaurantId,
-        line.menuItemId,
-        line.name,
-        line.unitPriceMinor,
-        line.quantity,
-        line.unitPriceMinor * line.quantity,
-        line.note,
-      ],
+       select id, $1, $2, menu_item_id, name, unit, quantity, unit * quantity, note, 'pending'
+       from jsonb_to_recordset($3::jsonb) as line(
+         id uuid, menu_item_id uuid, name text, unit integer, quantity integer, note text
+       )`,
+      [orderId, restaurantId, JSON.stringify(rows)],
     );
-    for (const modifier of line.modifiers) {
-      await tx.query(
-        `insert into order_item_modifiers (id, order_item_id, modifier_name, price_adjustment_minor)
-         values ($1, $2, $3, $4)`,
-        [randomUUID(), orderItemId, modifier.name, modifier.price_adjustment_minor],
-      );
-    }
+    const modifiers = items.flatMap(({ id, line }) => line.modifiers.map((modifier) => ({
+      id: randomUUID(), order_item_id: id, name: modifier.name, adjustment: modifier.price_adjustment_minor,
+    })));
+    if (!modifiers.length) return;
+    await tx.query(
+      `insert into order_item_modifiers (id, order_item_id, modifier_name, price_adjustment_minor)
+       select id, order_item_id, name, adjustment
+       from jsonb_to_recordset($1::jsonb) as modifier(id uuid, order_item_id uuid, name text, adjustment integer)`,
+      [JSON.stringify(modifiers)],
+    );
   }
 
   async createStaffOrder(user: AuthenticatedUser, input: GuestOrderInput) {
@@ -235,7 +238,7 @@ export class OrdersService {
     if (!reason || reason.length > 160 || !Number.isInteger(patch.quantity) || patch.quantity < 0 || patch.quantity > 99) {
       throw new BadRequestException('Set a quantity from 0 to 99 and enter a correction reason.');
     }
-    const addition = addedLine ? await this.resolveLine(user.restaurantId, addedLine) : null;
+    const [addition] = addedLine ? await this.resolveLines(user.restaurantId, [addedLine]) : [];
     const restaurant = await this.restaurants.findById(user.restaurantId);
     const summary = await this.db.transaction(async (tx) => {
       const order = await tx.one<{ status: string; paid: number; subtotal: number; tax: number; total: number; rate: number | null; inclusive: boolean | null }>(
@@ -272,7 +275,7 @@ export class OrdersService {
       }
       const totals = computeTotals(basket.gross + (patch.quantity - line.quantity) * line.unit, tax);
       if (addition) {
-        await this.insertLine(tx, user.restaurantId, orderId, itemId, addition);
+        await this.insertLines(tx, user.restaurantId, orderId, [{ id: itemId, line: addition }]);
       } else if (patch.quantity === 0) {
         await tx.query('delete from order_items where id = $1 and order_id = $2', [itemId, orderId]);
       } else {

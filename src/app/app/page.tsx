@@ -1,6 +1,6 @@
 "use client";
 
-import { EmptyState, PageHeader, SkeletonGrid } from "@/components/ui";
+import { PageHeader, SkeletonGrid } from "@/components/ui";
 import { api, formatElapsed, formatMoney } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import { Restaurant } from "@/lib/types";

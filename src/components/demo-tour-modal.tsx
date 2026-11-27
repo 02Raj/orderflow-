@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 
 const TOUR_DONE_KEY = "ordernflow:demo_tour_done";
+const subscribe = () => () => {};
+const getServerTour = () => false;
 
 const STEPS = [
   {
@@ -58,25 +60,17 @@ export function DemoTourModal({
   onExternalClose?: () => void;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const [idx, setIdx] = useState(0);
 
-  useEffect(() => {
-    if (externalOpen) {
-      setIdx(0);
-      setOpen(true);
-      return;
-    }
-    if (typeof window === "undefined") return;
+  const autoOpen = useSyncExternalStore(subscribe, () => {
     const params = new URLSearchParams(window.location.search);
     const isDemoUser = userEmail?.endsWith("@harbourandrye.demo");
     const done = window.localStorage.getItem(TOUR_DONE_KEY);
-    if ((params.get("demo") === "1" || isDemoUser) && !done) {
-      setOpen(true);
-    }
-  }, [userEmail, externalOpen]);
+    return Boolean((params.get("demo") === "1" || isDemoUser) && !done);
+  }, getServerTour);
 
-  if (!open) return null;
+  if (!externalOpen && (!autoOpen || dismissed)) return null;
 
   const current = STEPS[idx];
   const isLast = idx === STEPS.length - 1;
@@ -88,7 +82,8 @@ export function DemoTourModal({
         window.history.replaceState({}, "", window.location.pathname);
       }
     }
-    setOpen(false);
+    setDismissed(true);
+    setIdx(0);
     onExternalClose?.();
   }
 

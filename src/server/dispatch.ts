@@ -600,6 +600,7 @@ function sse(user: AuthenticatedUser, orders: Awaited<ReturnType<typeof getServi
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let onEvent: ((payload: { type: string; order: unknown }) => void) | undefined;
   let closed = false;
+  let sessionCheck: Promise<void> | undefined;
   function cleanup() {
     closed = true;
     if (heartbeat) clearInterval(heartbeat);
@@ -611,7 +612,9 @@ function sse(user: AuthenticatedUser, orders: Awaited<ReturnType<typeof getServi
       controller.enqueue(encoder.encode(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`));
       const send = async (message: string) => {
         try {
-          await validateSession();
+          // A burst can arrive while the current session check is still in flight.
+          sessionCheck ??= validateSession().finally(() => { sessionCheck = undefined; });
+          await sessionCheck;
           if (!closed) controller.enqueue(encoder.encode(message));
         } catch {
           if (!closed) { cleanup(); controller.close(); }

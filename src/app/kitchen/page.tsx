@@ -3,14 +3,14 @@
 import { AppShell } from "@/components/app-shell";
 import { KitchenBoard } from "@/components/kitchen-board";
 import { getUser } from "@/lib/session";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+const subscribe = () => () => {};
+const getServerRole = () => null;
+const getRole = () => getUser()?.role ?? null;
 
 export default function KitchenPage() {
-  const [role, setRole] = useState<string | null>(null);
-
-  useEffect(() => {
-    setRole(getUser()?.role ?? null);
-  }, []);
+  const role = useSyncExternalStore(subscribe, getRole, getServerRole);
 
   if (role === "kitchen") return <KitchenBoard />;
   return (
