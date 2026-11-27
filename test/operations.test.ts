@@ -551,7 +551,7 @@ describe('dodo payments webhook', () => {
       data: {
         subscription_id: 'sub_dodo_123',
         customer: { customer_id: 'cus_dodo_123' },
-        metadata: { restaurant_id: owner.restaurantId },
+        metadata: { restaurant_id: owner.restaurantId, billing_interval: 'yearly' },
       },
     });
 
@@ -577,6 +577,7 @@ describe('dodo payments webhook', () => {
     const active = await billing.status(owner.restaurantId);
     assert.equal(active.status, 'active');
     assert.equal(active.provider, 'dodo');
+    assert.equal(active.priceLabel, 'US$290 / year');
 
     const cancelBody = JSON.stringify({
       type: 'subscription.cancelled',
@@ -598,11 +599,12 @@ describe('dodo payments webhook', () => {
     const originalAppUrl = process.env.APP_PUBLIC_URL;
     process.env.DODO_PAYMENTS_API_KEY = 'test_api_key';
     process.env.DODO_PRODUCT_ID = 'pdt_monthly_test';
+    process.env.DODO_YEARLY_PRODUCT_ID = 'pdt_yearly_test';
     process.env.DODO_PAYMENTS_ENV = 'test_mode';
     process.env.APP_PUBLIC_URL = 'http://127.0.0.1:43123';
     await db.query(
       `update subscriptions
-       set status = 'trialing', trial_ends_at = $2
+       set status = 'trialing', trial_ends_at = $2, provider_subscription_id = null
        where restaurant_id = $1`,
       [owner.restaurantId, new Date(Date.now() + 10 * 86400000).toISOString()],
     );
@@ -631,10 +633,17 @@ describe('dodo payments webhook', () => {
       assert.deepEqual(requestBody.subscription_data, { trial_period_days: 10 });
       assert.equal((requestBody.feature_flags as { allow_tax_id: boolean }).allow_tax_id, true);
       assert.match(String(requestBody.cancel_url), /^http:\/\/127\.0\.0\.1:43123\//);
+      await billing.createCheckout(owner, '/app/settings', '/app/settings', 'yearly');
+      assert.deepEqual(requestBody.product_cart, [{ product_id: 'pdt_yearly_test', quantity: 1 }]);
+      assert.deepEqual(requestBody.metadata, { restaurant_id: owner.restaurantId, billing_interval: 'yearly' });
+      await assert.rejects(() => billing.createCheckout(owner, '/', '/', 'high_volume'), /monthly or yearly/);
+      delete process.env.DODO_YEARLY_PRODUCT_ID;
+      await assert.rejects(() => billing.createCheckout(owner, '/', '/', 'yearly'), /currently unavailable/);
     } finally {
       globalThis.fetch = originalFetch;
       delete process.env.DODO_PAYMENTS_API_KEY;
       delete process.env.DODO_PRODUCT_ID;
+      delete process.env.DODO_YEARLY_PRODUCT_ID;
       delete process.env.DODO_PAYMENTS_ENV;
       if (originalAppUrl === undefined) delete process.env.APP_PUBLIC_URL;
       else process.env.APP_PUBLIC_URL = originalAppUrl;

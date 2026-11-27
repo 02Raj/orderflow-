@@ -30,15 +30,20 @@ Copy `.env.example` to `.env.local`.
 | `JWT_SECRET` | No | Change before any real restaurant. |
 | `DODO_PAYMENTS_ENV` | With Dodo | Keep `test_mode` while testing; use `live_mode` only at launch. |
 | `DODO_PAYMENTS_API_KEY` | With Dodo | Server-side test/live API key. |
-| `DODO_PRODUCT_ID` | With Dodo | Monthly recurring subscription product. |
+| `DODO_PRODUCT_ID` | With Dodo | US$29/month recurring product. |
+| `DODO_YEARLY_PRODUCT_ID` | For yearly Dodo checkout | Separate US$290/year recurring product. |
 | `DODO_PAYMENTS_WEBHOOK_KEY` | With Dodo | Webhook endpoint signing secret. |
 | `STRIPE_SECRET_KEY` | No | Optional fallback; unset providers use mock checkout outside production. |
 | `STRIPE_PRICE_ID` | With Stripe | Recurring $29 price. |
+| `STRIPE_YEARLY_PRICE_ID` | For yearly Stripe checkout | Separate US$290/year recurring price. |
 | `STRIPE_WEBHOOK_SECRET` | With Stripe | Signature verification. |
 | `APP_PUBLIC_URL` | Production | App origin. |
 | `TRIAL_DAYS` | No | Default 14. Checkout preserves only the remaining trial days. |
 
 API lives at `/api/*` on the same origin. SSE kitchen tickets need a long-running Node process (`npm run start`), not a serverless timeout.
+
+Apply the updated database schema before enabling yearly checkout on an existing deployment.
+Use separate recurring products or prices for each interval and verify the USD amount and renewal interval in the provider's test checkout before switching to live. An unconfigured yearly option is hidden in Billing settings.
 
 ## Deploy
 

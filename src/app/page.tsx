@@ -3,6 +3,7 @@ import Link from "next/link";
 import { BrandLink } from "@/components/brand";
 import { SiteFooter } from "@/components/legal";
 import { ServicePreview } from "@/components/service-preview";
+import { BILLING_INTERVALS, BILLING_PRICES, YEARLY_SAVINGS } from "@/lib/billing-prices";
 import { PAYMENTS_ENABLED } from "@/lib/payments";
 import { MAIL, SITE_URL } from "@/lib/site";
 
@@ -66,7 +67,7 @@ const questions = [
   ],
   [
     "Do you take a percentage cut of my orders?",
-    "Zero commission. You pay one flat monthly subscription and keep 100% of every dollar, pound, or rupee you sell.",
+    "OrderNFlow charges a flat subscription per location and takes no commission on orders. Your existing payment setup stays in place.",
   ],
   [
     "Do I have to replace my card terminal or till?",
@@ -83,7 +84,6 @@ const questions = [
 ];
 
 export default function HomePage() {
-  const starterPrice = PAYMENTS_ENABLED ? process.env.PRICE_LABEL ?? "$29 / month" : "$29 / month";
 
   return (
     <div className="min-h-screen text-[var(--ink)]">
@@ -266,7 +266,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Pricing + Testimonial Band (Dark Theme matching Fresh KDS bottom half) */}
         <section id="pricing" className="scroll-mt-16 bg-[var(--board)] py-16 text-[var(--ticket)] sm:py-24">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="max-w-2xl">
@@ -274,85 +273,40 @@ export default function HomePage() {
                 Simple, flat pricing
               </p>
               <h2 className="display mt-2 text-3xl tracking-tight sm:text-5xl">
-                Run your entire floor &amp; kitchen with one plan.
+                From table QR to kitchen screen.
               </h2>
               <p className="mt-3 text-base text-[#e4d7c5]">
-                No hardware lease. No 2.5% per-order cut. Start with a free trial.
+                One plan per location. Use the devices you already have. No OrderNFlow commission on orders.
               </p>
             </div>
 
-            <div className="mt-10 grid gap-6 lg:grid-cols-3">
-              {/* Starter */}
-              <div className="flex flex-col justify-between rounded-2xl border border-[#3a3129] bg-[#1c1713] p-6">
-                <div>
-                  <p className="text-sm font-semibold text-[#c9b89a]">Single Venue</p>
-                  <p className="display mt-3 text-4xl">{starterPrice}</p>
-                  <p className="mt-1 text-xs text-[#c9b89a]">Flat fee per venue · 0% order commission</p>
-                  <ul className="mt-6 space-y-2.5 text-sm text-[#e4d7c5]">
-                    <li>✓ Unlimited tables &amp; printable QR codes</li>
-                    <li>✓ Live Kitchen Display (KDS) in any browser</li>
-                    <li>✓ Floor &amp; Waiter order-taking mode</li>
-                    <li>✓ Local VAT / GST / Sales Tax presets</li>
-                  </ul>
-                </div>
-                <Link href="/signup" className="btn btn-chili mt-8 w-full py-3">
-                  Start free trial
-                </Link>
-              </div>
-
-              {/* Popular / Pro */}
-              <div className="flex flex-col justify-between rounded-2xl border-2 border-[var(--chili)] bg-[#231b15] p-6">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-[#f3d0c8]">High-Volume Venue</p>
-                    <span className="rounded-full bg-[var(--chili)] px-2.5 py-0.5 text-[11px] font-bold text-white">
-                      Popular
-                    </span>
+            <div className="mt-10 grid gap-4 sm:grid-cols-2">
+              {BILLING_INTERVALS.map((interval) => {
+                const price = BILLING_PRICES[interval];
+                return (
+                  <div key={interval} className={`rounded-2xl border p-6 ${interval === "yearly" ? "border-[var(--chili)] bg-[#231b15]" : "border-[#3a3129] bg-[#1c1713]"}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold">{price.name}</h3>
+                      {interval === "yearly" && <span className="rounded-full bg-[var(--chili)] px-3 py-1 text-xs font-semibold text-white">Save US${YEARLY_SAVINGS}</span>}
+                    </div>
+                    <p className="display mt-3 text-4xl">US${price.amount}</p>
+                    <p className="mt-1 text-sm text-[#e4d7c5]">Per location, billed every {price.period}.</p>
                   </div>
-                  <p className="display mt-3 text-4xl">$49 / month</p>
-                  <p className="mt-1 text-xs text-[#c9b89a]">Everything in Single Venue, plus:</p>
-                  <ul className="mt-6 space-y-2.5 text-sm text-[#e4d7c5]">
-                    <li>✓ Multiple kitchen &amp; bar display screens</li>
-                    <li>✓ Unlimited staff &amp; manager logins</li>
-                    <li>✓ Custom kitchen target timers &amp; alerts</li>
-                    <li>✓ Date-range sales &amp; top-dish analytics</li>
-                  </ul>
-                </div>
-                <Link href="/signup" className="btn btn-chili mt-8 w-full py-3">
-                  Start free trial
-                </Link>
-              </div>
-
-              {/* Multi-location */}
-              <div className="flex flex-col justify-between rounded-2xl border border-[#3a3129] bg-[#1c1713] p-6">
-                <div>
-                  <p className="text-sm font-semibold text-[#c9b89a]">Hospitality Groups</p>
-                  <p className="display mt-3 text-4xl">Talk to us</p>
-                  <p className="mt-1 text-xs text-[#c9b89a]">For 3+ locations &amp; custom setups</p>
-                  <ul className="mt-6 space-y-2.5 text-sm text-[#e4d7c5]">
-                    <li>✓ Dedicated menu &amp; table onboarding</li>
-                    <li>✓ Multi-location reporting &amp; exports</li>
-                    <li>✓ Custom SLA &amp; priority support</li>
-                  </ul>
-                </div>
-                <a
-                  href={`mailto:${MAIL.hello}?subject=OrderNFlow%20Multi-Location`}
-                  className="btn mt-8 w-full border border-[#51453b] bg-transparent py-3 text-white hover:bg-[#2a221c]"
-                >
-                  Contact team
-                </a>
-              </div>
+                );
+              })}
             </div>
-
-            {/* Quote */}
-            <blockquote className="mt-14 rounded-2xl border border-[#3a3129] bg-[#1c1713] p-6 sm:p-8">
-              <p className="display text-xl leading-relaxed text-[var(--ticket)] sm:text-2xl">
-                “We ditched paper tickets and a $1,400 tablet quote in one afternoon. Guests scan the table QR, tickets land on our kitchen laptop immediately, and we never miss an allergy note during Saturday rush.”
-              </p>
-              <footer className="mt-4 text-sm text-[#c9b89a]">
-                — Independent Bistro Operator · Demo Profile
-              </footer>
-            </blockquote>
+            <div className="mt-6 rounded-2xl border border-[#3a3129] bg-[#1c1713] p-6">
+              <h3 className="display text-2xl">Included with both billing options</h3>
+              <ul className="mt-4 grid gap-3 text-sm text-[#e4d7c5] sm:grid-cols-2">
+                <li>Table QR codes and guest ordering</li>
+                <li>Waiter order-taking and a shared live kitchen board</li>
+                <li>Staff roles, kitchen timers and overdue ticket alerts</li>
+                <li>Sales reports, CSV export and configurable local tax display</li>
+              </ul>
+              <p className="mt-5 text-sm text-[#e4d7c5]">For high-volume service, QR and waiter orders feed the same kitchen queue so the floor can see which tickets still need attention.</p>
+            </div>
+            <Link href="/signup" className="btn btn-chili mt-6 px-8 py-3">Start free trial</Link>
+            {!PAYMENTS_ENABLED && <p className="mt-3 text-sm text-[#c9b89a]">Paid subscriptions open after early access.</p>}
           </div>
         </section>
 

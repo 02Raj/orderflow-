@@ -3,6 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser, SubscriptionStatus } from '../common/types';
 import { PAYMENTS_ENABLED } from '../../lib/payments';
+import { BILLING_INTERVALS, billingPriceLabel, type BillingInterval } from '../../lib/billing-prices';
 import { BadRequestException, HttpError } from '../errors';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -19,6 +20,7 @@ export interface SubscriptionView {
   /** Single flag the frontend and the guard both read. */
   accessBlocked: boolean;
   priceLabel: string;
+  checkoutIntervals: BillingInterval[];
   mockMode: boolean;
 }
 
@@ -26,6 +28,7 @@ interface SubscriptionRow {
   restaurant_id: string;
   status: SubscriptionStatus; 
   plan: string;
+  billing_interval: BillingInterval;
   trial_ends_at: string;
   current_period_end: string | null;
   provider: string | null;
@@ -37,7 +40,8 @@ interface DodoEventData {
   subscription_id?: string;
   next_billing_date?: string;
   customer?: { customer_id?: string };
-  metadata?: { restaurant_id?: string };
+  metadata?: { restaurant_id?: string; billing_interval?: string };
+  product_id?: string;
   service_periods?: Array<{ subscription_id?: string; ends_at?: string }>;
 }
 
@@ -82,7 +86,8 @@ export class BillingService {
       accessBlocked:
         PAYMENTS_ENABLED &&
         (status === 'expired' || status === 'suspended' || status === 'canceled'),
-      priceLabel: process.env.PRICE_LABEL ?? '$29 / month',
+      priceLabel: billingPriceLabel(row?.billing_interval ?? 'monthly'),
+      checkoutIntervals: BILLING_INTERVALS.filter((interval) => this.mockMode || Boolean(this.checkoutProduct(interval))),
       mockMode: this.mockMode,
     };
   }
@@ -91,26 +96,33 @@ export class BillingService {
    * Dodo Payments Checkout (Test/Live) when configured, Stripe as fallback,
    * otherwise a local simulation so trial -> subscribe -> unlock is testable without credentials.
    */
-  async createCheckout(user: AuthenticatedUser, successUrl: string, cancelUrl: string) {
+  async createCheckout(user: AuthenticatedUser, successUrl: string, cancelUrl: string, interval: unknown = 'monthly') {
+    if (interval !== 'monthly' && interval !== 'yearly') {
+      throw new BadRequestException('Choose monthly or yearly billing.');
+    }
     const returnUrl = this.safeCallbackUrl(successUrl, 'billing=success');
     const checkoutCancelUrl = this.safeCallbackUrl(cancelUrl, 'billing=cancelled');
+    const product = this.checkoutProduct(interval);
+    if (!product && !this.mockMode) {
+      throw new HttpError(503, 'This billing option is currently unavailable.');
+    }
+
+    const current = await this.db.one<SubscriptionRow>(
+      'select * from subscriptions where restaurant_id = $1',
+      [user.restaurantId],
+    );
+    if (current?.provider_subscription_id && ['active', 'past_due', 'suspended', 'trialing'].includes(current.status)) {
+      throw new BadRequestException('This venue already has a subscription. Manage it with your billing provider.');
+    }
+    const remainingTrialDays = current?.status === 'trialing'
+      ? Math.max(0, Math.ceil((new Date(current.trial_ends_at).getTime() - Date.now()) / DAY_MS))
+      : 0;
 
     if (this.dodoEnabled) {
       const baseUrl =
         process.env.DODO_PAYMENTS_ENV === 'live_mode'
           ? DODO_LIVE_API
           : DODO_TEST_API;
-      const current = await this.db.one<SubscriptionRow>(
-        'select * from subscriptions where restaurant_id = $1',
-        [user.restaurantId],
-      );
-      if (current?.status === 'active' && current.provider_subscription_id) {
-        throw new BadRequestException('This venue already has an active subscription.');
-      }
-      const remainingTrialDays = current?.status === 'trialing'
-        ? Math.max(0, Math.ceil((new Date(current.trial_ends_at).getTime() - Date.now()) / DAY_MS))
-        : 0;
-
       let response: Response;
       try {
         response = await fetch(`${baseUrl}/checkouts`, {
@@ -121,9 +133,9 @@ export class BillingService {
           },
           signal: AbortSignal.timeout(10_000),
           body: JSON.stringify({
-            product_cart: [{ product_id: process.env.DODO_PRODUCT_ID, quantity: 1 }],
+            product_cart: [{ product_id: product, quantity: 1 }],
             customer: { email: user.email, name: user.fullName },
-            metadata: { restaurant_id: user.restaurantId },
+            metadata: { restaurant_id: user.restaurantId, billing_interval: interval },
             return_url: returnUrl,
             cancel_url: checkoutCancelUrl,
             subscription_data: { trial_period_days: remainingTrialDays },
@@ -155,28 +167,28 @@ export class BillingService {
     if (this.mockMode) {
       return {
         mode: 'mock' as const,
-        url: `${process.env.APP_PUBLIC_URL ?? 'http://127.0.0.1:43123'}/api/billing/mock-confirm?restaurantId=${user.restaurantId}&redirect=${encodeURIComponent(returnUrl)}`,
+        url: `${process.env.APP_PUBLIC_URL ?? 'http://127.0.0.1:43123'}/api/billing/mock-confirm?restaurantId=${user.restaurantId}&interval=${interval}&redirect=${encodeURIComponent(returnUrl)}`,
       };
     }
 
-    if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_PRICE_ID) {
+    if (!process.env.STRIPE_SECRET_KEY || !product) {
       throw new HttpError(503, 'Payments are enabled, but no payment provider is configured.');
     }
 
     const { default: Stripe } = await import('stripe');
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-    const current = await this.db.one<SubscriptionRow>(
-      'select * from subscriptions where restaurant_id = $1',
-      [user.restaurantId],
-    );
+    const customerId = current?.provider === 'stripe' ? current.provider_customer_id : null;
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer: current?.provider_customer_id ?? undefined,
-      customer_email: current?.provider_customer_id ? undefined : user.email,
-      line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
+      customer: customerId ?? undefined,
+      customer_email: customerId ? undefined : user.email,
+      line_items: [{ price: product, quantity: 1 }],
       client_reference_id: user.restaurantId,
-      subscription_data: { metadata: { restaurant_id: user.restaurantId } },
+      subscription_data: {
+        metadata: { restaurant_id: user.restaurantId },
+        trial_period_days: remainingTrialDays || undefined,
+      },
       success_url: returnUrl,
       cancel_url: checkoutCancelUrl,
     });
@@ -186,7 +198,7 @@ export class BillingService {
 
   async markActive(restaurantId: string, details: Partial<SubscriptionRow> = {}) {
     const periodEnd =
-      details.current_period_end ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      details.current_period_end ?? null;
 
     await this.db.query(
       `update subscriptions
@@ -194,7 +206,8 @@ export class BillingService {
            provider = coalesce($2, provider),
            provider_customer_id = coalesce($3, provider_customer_id),
            provider_subscription_id = coalesce($4, provider_subscription_id),
-           current_period_end = $5,
+           current_period_end = coalesce($5, current_period_end),
+           billing_interval = coalesce($6, billing_interval),
            updated_at = now()
        where restaurant_id = $1`,
       [
@@ -203,6 +216,7 @@ export class BillingService {
         details.provider_customer_id ?? null,
         details.provider_subscription_id ?? null,
         periodEnd,
+        details.billing_interval ?? null,
       ],
     );
 
@@ -243,12 +257,15 @@ export class BillingService {
 
     switch (event.type) {
       case 'checkout.session.completed': {
-        const session = event.data.object as { client_reference_id?: string; customer?: string; subscription?: string };
-        if (session.client_reference_id) {
+        const session = event.data.object;
+        if (session.client_reference_id && session.mode === 'subscription' && typeof session.subscription === 'string') {
+          const subscription = await stripe.subscriptions.retrieve(session.subscription);
           await this.markActive(session.client_reference_id, {
             provider: 'stripe',
-            provider_customer_id: (session.customer as string) ?? null,
-            provider_subscription_id: (session.subscription as string) ?? null,
+            provider_customer_id: typeof session.customer === 'string' ? session.customer : null,
+            provider_subscription_id: subscription.id,
+            billing_interval: subscription.items.data[0]?.price.recurring?.interval === 'year' ? 'yearly' : 'monthly',
+            current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
           });
         }
         break;
@@ -259,6 +276,7 @@ export class BillingService {
         if (restaurantId) {
           const end = invoice.lines?.data?.[0]?.period?.end;
           await this.markActive(restaurantId, {
+            provider: 'stripe',
             current_period_end: end ? new Date(end * 1000).toISOString() : undefined,
           });
         }
@@ -349,6 +367,7 @@ export class BillingService {
               provider: 'dodo',
               provider_customer_id: data.customer?.customer_id ?? null,
               provider_subscription_id: subscriptionId ?? null,
+              billing_interval: this.dodoBillingInterval(data),
               current_period_end: data.next_billing_date ?? servicePeriod?.ends_at ?? undefined,
             });
             break;
@@ -396,6 +415,22 @@ export class BillingService {
       [subscriptionId],
     );
     return row?.restaurant_id ?? null;
+  }
+
+  private checkoutProduct(interval: BillingInterval) {
+    if (this.dodoEnabled) {
+      return interval === 'yearly' ? process.env.DODO_YEARLY_PRODUCT_ID : process.env.DODO_PRODUCT_ID;
+    }
+    if (process.env.STRIPE_SECRET_KEY) {
+      return interval === 'yearly' ? process.env.STRIPE_YEARLY_PRICE_ID : process.env.STRIPE_PRICE_ID;
+    }
+  }
+
+  private dodoBillingInterval(data: DodoEventData): BillingInterval | undefined {
+    if (data.product_id && data.product_id === process.env.DODO_YEARLY_PRODUCT_ID) return 'yearly';
+    if (data.product_id && data.product_id === process.env.DODO_PRODUCT_ID) return 'monthly';
+    const interval = data.metadata?.billing_interval;
+    if (interval === 'monthly' || interval === 'yearly') return interval;
   }
 
   private safeCallbackUrl(candidate: string, fallbackQuery: string): string {

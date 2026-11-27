@@ -103,5 +103,6 @@ export interface BillingStatus {
   daysLeftInTrial: number;
   accessBlocked: boolean;
   priceLabel: string;
+  checkoutIntervals: import('./billing-prices').BillingInterval[];
   mockMode: boolean;
 }

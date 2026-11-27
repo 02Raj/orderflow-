@@ -525,13 +525,14 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
     if (PAYMENTS_ENABLED && method === 'POST' && path === '/billing/checkout') {
       throttle(clientKey(request, 'checkout'), 5, 60);
       assertRole(user!, 'owner');
-      const body = await readJson<{ successUrl?: string; cancelUrl?: string }>(request);
+      const body = await readJson<{ successUrl?: string; cancelUrl?: string; interval?: unknown }>(request);
       const appUrl = process.env.APP_PUBLIC_URL ?? 'http://127.0.0.1:43123';
       return json(
         await svc.billing.createCheckout(
           user!,
-          body.successUrl ?? `${appUrl}/settings?billing=success`,
-          body.cancelUrl ?? `${appUrl}/settings?billing=cancelled`,
+          body.successUrl ?? `${appUrl}/app/settings?billing=success`,
+          body.cancelUrl ?? `${appUrl}/app/settings?billing=cancelled`,
+          body.interval,
         ),
       );
     }
@@ -540,7 +541,11 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
       const restaurantId = request.nextUrl.searchParams.get('restaurantId') ?? '';
       const redirect = request.nextUrl.searchParams.get('redirect') || '/';
       if (svc.billing.mockMode && restaurantId) {
-        await svc.billing.markActive(restaurantId, { provider: 'mock' });
+        const interval = request.nextUrl.searchParams.get('interval');
+        await svc.billing.markActive(restaurantId, {
+          provider: 'mock',
+          billing_interval: interval === 'yearly' ? 'yearly' : 'monthly',
+        });
       }
       const dest = redirect.startsWith('http')
         ? redirect

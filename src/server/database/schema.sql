@@ -61,6 +61,9 @@ create table if not exists subscriptions (
   updated_at timestamptz not null default now()
 );
 
+alter table subscriptions add column if not exists billing_interval text not null default 'monthly'
+  check (billing_interval in ('monthly', 'yearly'));
+
 -- Provider webhook delivery IDs are unique. Keeping a receipt prevents retries or
 -- concurrent deliveries from applying the same lifecycle transition twice.
 create table if not exists billing_webhook_events (

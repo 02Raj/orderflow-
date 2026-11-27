@@ -6,6 +6,7 @@ import { getToken, saveSession, type SessionUser } from "@/lib/session";
 import { readKitchenTargets } from "@/lib/kitchen-targets";
 import { computeTotals, formatTaxRate, taxGuestHint } from "@/lib/tax";
 import { PAYMENTS_ENABLED } from "@/lib/payments";
+import { billingPriceLabel, type BillingInterval } from "@/lib/billing-prices";
 import { BillingStatus, Restaurant } from "@/lib/types";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -32,6 +33,9 @@ interface CountryPreset {
 export default function SettingsPage() {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState("");
   const [presets, setPresets] = useState<CountryPreset[]>([]);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -59,7 +63,10 @@ export default function SettingsPage() {
       setUrgent(String(r.kitchenUrgentMinutes ?? legacy.forgottenMinutes));
     });
     if (PAYMENTS_ENABLED) {
-      api<BillingStatus>("/billing/status", { token }).then(setBilling);
+      api<BillingStatus>("/billing/status", { token }).then((status) => {
+        setBilling(status);
+        setBillingInterval(status.checkoutIntervals[0] ?? "monthly");
+      }).catch(() => setBillingError("Billing status could not be loaded."));
     }
     api<CountryPreset[]>("/auth/country-presets").then(setPresets).catch(() => undefined);
   }, []);
@@ -113,18 +120,20 @@ export default function SettingsPage() {
 
   async function subscribe() {
     const token = getToken();
-    if (!token) return;
-    const res = await api<{ url: string }>("/billing/checkout", {
-      method: "POST",
-      token,
-      json: {
-        successUrl: `${window.location.origin}/app/settings?billing=success`,
-        cancelUrl: `${window.location.origin}/app/settings?billing=cancelled`,
-      },
-    });
-    window.location.href = res.url.startsWith("http")
-      ? res.url
-      : `/api${res.url.startsWith("/") ? res.url : `/${res.url}`}`;
+    if (!token || billingBusy) return;
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      const res = await api<{ url: string }>("/billing/checkout", {
+        method: "POST",
+        token,
+        json: { interval: billingInterval },
+      });
+      window.location.assign(res.url);
+    } catch (error) {
+      setBillingError(error instanceof Error ? error.message : "Checkout could not be opened.");
+      setBillingBusy(false);
+    }
   }
 
   async function saveOrdering(nextPaused = restaurant?.orderingPaused, includeHours = true) {
@@ -371,18 +380,40 @@ export default function SettingsPage() {
                 Status: {billing.status}
                 {billing.status === "trialing" ? ` · ${billing.daysLeftInTrial} days left` : ""}
               </p>
-              <p className="mt-1 text-sm text-[var(--ink-soft)]">{billing.priceLabel}</p>
+              {billing.status === "active" && (
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">{billing.priceLabel}</p>
+              )}
               {billing.mockMode ? (
                 <p className="mt-3 text-xs text-[var(--ink-soft)]">
                   Payment keys are not set. Checkout uses a local mock so you can test the trial →
                   paid gate before adding Dodo Payments credentials.
                 </p>
               ) : null}
-              <button type="button" onClick={subscribe} className="btn btn-chili mt-5 w-full py-3">
-                Subscribe now
-              </button>
+              {["trialing", "expired", "canceled"].includes(billing.status) && (
+                billing.checkoutIntervals.length > 0 ? (
+                  <>
+                    <label className="mt-4 block text-sm">
+                      Billing cycle
+                      <select
+                        className="field mt-1"
+                        value={billingInterval}
+                        disabled={billingBusy}
+                        onChange={(event) => setBillingInterval(event.target.value === "yearly" ? "yearly" : "monthly")}
+                      >
+                        {billing.checkoutIntervals.map((interval) => (
+                          <option key={interval} value={interval}>{billingPriceLabel(interval)} per location</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="button" onClick={subscribe} disabled={billingBusy} className="btn btn-chili mt-5 w-full py-3">
+                      {billingBusy ? "Opening checkout…" : "Continue to checkout"}
+                    </button>
+                  </>
+                ) : <p className="mt-3 text-sm">Checkout is currently unavailable.</p>
+              )}
             </>
           ) : null}
+          {billingError && <p role="alert" className="mt-3 text-sm text-[var(--chili-dark)]">{billingError}</p>}
         </div>
         ) : null}
         <form onSubmit={savePassword} className="card p-5">
