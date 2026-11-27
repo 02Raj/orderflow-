@@ -49,9 +49,10 @@ export default function DpaPage() {
 
       <h2 className="display pt-4 text-2xl">Sub-processors</h2>
       <p>
-        Hosting/database of your choosing when you set DATABASE_URL; Stripe if you enable paid
-        billing. We will list additions on the Security page and give a reasonable objection
-        window before a material new sub-processor goes live on guest data.
+        Hosting/database of your choosing when you set DATABASE_URL; Dodo Payments as merchant of
+        record when paid billing is enabled; and Stripe only if the optional fallback is enabled.
+        We will list additions on the Security page and give a reasonable objection window before
+        a material new sub-processor goes live on guest data.
       </p>
 
       <h2 className="display pt-4 text-2xl">Assistance, deletion, audit</h2>

@@ -8,7 +8,13 @@ export interface AuthenticatedUser {
   role: Role;
 }
 
-export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired';
+export type SubscriptionStatus =
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'suspended'
+  | 'canceled'
+  | 'expired';
 
 export type OrderStatus = 'new' | 'accepted' | 'preparing' | 'ready' | 'served' | 'cancelled';
 export type FulfillmentType = 'dine_in' | 'takeaway';

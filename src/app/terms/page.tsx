@@ -40,9 +40,10 @@ export default function TermsPage() {
 
       <h2 className="display pt-4 text-2xl">Trial and fees</h2>
       <p>
-        Paid subscriptions are not turned on yet. Venues can use OrderNFlow without a card. If we
-        start charging later, the price will be shown on the site before anyone is billed, and we
-        will not silently add hardware or payment lock-in.
+        The current subscription price and trial length are shown before checkout. The free trial
+        does not require a card; choosing to subscribe uses the remaining trial days and does not
+        silently add another trial. Billing, applicable taxes, invoices, and renewals are handled
+        by our merchant-of-record payment provider. We do not add hardware or payment lock-in.
       </p>
 
       <h2 className="display pt-4 text-2xl">Data and privacy</h2>

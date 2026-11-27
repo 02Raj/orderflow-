@@ -19,6 +19,7 @@ const PUBLIC_PATHS = new Set([
   'POST /auth/reset-password',
   'GET /billing/mock-confirm',
   'POST /billing/webhook/stripe',
+  'POST /billing/webhook/dodo',
 ]);
 
 function isPublic(method: string, path: string) {
@@ -112,11 +113,13 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
         database: svc.db.mode,
         latencyMs: Date.now() - started,
         paymentsMode: PAYMENTS_ENABLED
-          ? process.env.STRIPE_SECRET_KEY
-            ? 'stripe'
-            : 'mock'
+          ? svc.billing.dodoEnabled
+            ? process.env.DODO_PAYMENTS_ENV === 'live_mode' ? 'dodo-live' : 'dodo-test'
+            : process.env.STRIPE_SECRET_KEY
+              ? 'stripe'
+              : svc.billing.mockMode ? 'mock' : 'misconfigured'
           : 'off',
-        trialDays: Number(process.env.TRIAL_DAYS ?? 45),
+        trialDays: Number(process.env.TRIAL_DAYS ?? 14),
       });
     }
 
@@ -549,6 +552,17 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
       const signature = request.headers.get('stripe-signature') ?? '';
       const raw = Buffer.from(await request.arrayBuffer());
       return json(await svc.billing.handleStripeEvent(raw, signature));
+    }
+
+    if ((PAYMENTS_ENABLED || svc.billing.dodoEnabled) && method === 'POST' && path === '/billing/webhook/dodo') {
+      const raw = await request.text();
+      return json(
+        await svc.billing.handleDodoEvent(raw, {
+          id: request.headers.get('webhook-id') ?? '',
+          timestamp: request.headers.get('webhook-timestamp') ?? '',
+          signature: request.headers.get('webhook-signature') ?? '',
+        }),
+      );
     }
 
     throw new NotFoundException('Not found');

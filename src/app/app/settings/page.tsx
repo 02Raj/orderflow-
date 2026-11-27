@@ -374,8 +374,8 @@ export default function SettingsPage() {
               <p className="mt-1 text-sm text-[var(--ink-soft)]">{billing.priceLabel}</p>
               {billing.mockMode ? (
                 <p className="mt-3 text-xs text-[var(--ink-soft)]">
-                  Stripe keys are not set. Checkout uses a local mock so you can test the trial →
-                  paid gate before adding credentials.
+                  Payment keys are not set. Checkout uses a local mock so you can test the trial →
+                  paid gate before adding Dodo Payments credentials.
                 </p>
               ) : null}
               <button type="button" onClick={subscribe} className="btn btn-chili mt-5 w-full py-3">

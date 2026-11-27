@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -531,4 +531,113 @@ test('required modifier groups validate QR, staff and ticket additions while pre
   const added = await orders.addItem(owner, valid.id, order([large.id]).lines[0], randomUUID(), 'One more');
   assert.deepEqual(added.items.map((line) => line.lineTotalMinor).sort(), [500, 520]);
   await assert.rejects(() => orders.createStaffOrder(owner, order([regular.id])), /no longer available/);
+});
+
+describe('dodo payments webhook', () => {
+  test('verifies Standard Webhooks signature and activates / cancels subscription', async () => {
+    const secretRaw = Buffer.from('test-dodo-webhook-secret-32-bytes!!').toString('base64');
+    process.env.DODO_PAYMENTS_WEBHOOK_KEY = `whsec_${secretRaw}`;
+
+    const sign = (id: string, ts: string, body: string) => {
+      const mac = createHmac('sha256', Buffer.from(secretRaw, 'base64'))
+        .update(`${id}.${ts}.${body}`)
+        .digest('base64');
+      return `v1,${mac}`;
+    };
+
+    const ts = String(Math.floor(Date.now() / 1000));
+    const activeBody = JSON.stringify({
+      type: 'subscription.active',
+      data: {
+        subscription_id: 'sub_dodo_123',
+        customer: { customer_id: 'cus_dodo_123' },
+        metadata: { restaurant_id: owner.restaurantId },
+      },
+    });
+
+    await assert.rejects(
+      () => billing.handleDodoEvent(activeBody, { id: 'msg_1', timestamp: ts, signature: 'v1,bad' }),
+      /invalid/i,
+    );
+
+    const accepted = await billing.handleDodoEvent(activeBody, {
+      id: 'msg_1',
+      timestamp: ts,
+      signature: sign('msg_1', ts, activeBody),
+    });
+    assert.deepEqual(accepted, { received: true });
+
+    const duplicate = await billing.handleDodoEvent(activeBody, {
+      id: 'msg_1',
+      timestamp: ts,
+      signature: sign('msg_1', ts, activeBody),
+    });
+    assert.deepEqual(duplicate, { received: true, duplicate: true });
+
+    const active = await billing.status(owner.restaurantId);
+    assert.equal(active.status, 'active');
+    assert.equal(active.provider, 'dodo');
+
+    const cancelBody = JSON.stringify({
+      type: 'subscription.cancelled',
+      data: { subscription_id: 'sub_dodo_123' },
+    });
+    await billing.handleDodoEvent(cancelBody, {
+      id: 'msg_2',
+      timestamp: ts,
+      signature: sign('msg_2', ts, cancelBody),
+    });
+
+    const canceled = await billing.status(owner.restaurantId);
+    assert.equal(canceled.status, 'canceled');
+    delete process.env.DODO_PAYMENTS_WEBHOOK_KEY;
+  });
+
+  test('creates a test checkout with remaining trial and tax collection enabled', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalAppUrl = process.env.APP_PUBLIC_URL;
+    process.env.DODO_PAYMENTS_API_KEY = 'test_api_key';
+    process.env.DODO_PRODUCT_ID = 'pdt_monthly_test';
+    process.env.DODO_PAYMENTS_ENV = 'test_mode';
+    process.env.APP_PUBLIC_URL = 'http://127.0.0.1:43123';
+    await db.query(
+      `update subscriptions
+       set status = 'trialing', trial_ends_at = $2
+       where restaurant_id = $1`,
+      [owner.restaurantId, new Date(Date.now() + 10 * 86400000).toISOString()],
+    );
+
+    let requestUrl = '';
+    let requestBody: Record<string, unknown> = {};
+    globalThis.fetch = async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({
+        session_id: 'cks_test_123',
+        checkout_url: 'https://test.checkout.dodopayments.com/session/cks_test_123',
+      });
+    };
+
+    try {
+      const checkout = await billing.createCheckout(
+        owner,
+        'http://127.0.0.1:43123/app/settings?billing=success',
+        'https://attacker.example/steal',
+      );
+      assert.equal(checkout.mode, 'dodo');
+      assert.match(checkout.url, /test\.checkout\.dodopayments\.com/);
+      assert.equal(requestUrl, 'https://test.dodopayments.com/checkouts');
+      assert.deepEqual(requestBody.product_cart, [{ product_id: 'pdt_monthly_test', quantity: 1 }]);
+      assert.deepEqual(requestBody.subscription_data, { trial_period_days: 10 });
+      assert.equal((requestBody.feature_flags as { allow_tax_id: boolean }).allow_tax_id, true);
+      assert.match(String(requestBody.cancel_url), /^http:\/\/127\.0\.0\.1:43123\//);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.DODO_PAYMENTS_API_KEY;
+      delete process.env.DODO_PRODUCT_ID;
+      delete process.env.DODO_PAYMENTS_ENV;
+      if (originalAppUrl === undefined) delete process.env.APP_PUBLIC_URL;
+      else process.env.APP_PUBLIC_URL = originalAppUrl;
+    }
+  });
 });

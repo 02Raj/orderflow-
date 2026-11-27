@@ -1,5 +1,5 @@
 /**
  * Paid billing is off until a real domain and a payment account exist.
- * Flip this to true, then wire the gateway in billing.service.ts.
+ * Set NEXT_PUBLIC_PAYMENTS_ENABLED=true in .env.local / production when ready.
  */
-export const PAYMENTS_ENABLED = false;
+export const PAYMENTS_ENABLED = process.env.NEXT_PUBLIC_PAYMENTS_ENABLED === 'true';

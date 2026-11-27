@@ -61,6 +61,17 @@ create table if not exists subscriptions (
   updated_at timestamptz not null default now()
 );
 
+-- Provider webhook delivery IDs are unique. Keeping a receipt prevents retries or
+-- concurrent deliveries from applying the same lifecycle transition twice.
+create table if not exists billing_webhook_events (
+  provider text not null,
+  event_id text not null,
+  event_type text not null,
+  received_at timestamptz not null default now(),
+  processed_at timestamptz,
+  primary key (provider, event_id)
+);
+
 create table if not exists dining_tables (
   id uuid primary key,
   restaurant_id uuid not null references restaurants (id) on delete cascade,

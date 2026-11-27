@@ -25,7 +25,7 @@ This document is the product bet behind the code. It is not a promise that resta
 
 - H1: Independent 1-location restaurants will complete signup → menu → QR → first real ticket in under 10 minutes.
 - H2: They will use it during a real service, not just a demo.
-- H3: They will pay **$29/month** after a **45-day** trial because lost tickets and wrong modifiers are visible money.
+- H3: They will pay **$29/month** after a **14-day** trial because lost tickets and wrong modifiers are visible money.
 - H4: Cold Gmail to independent owners can produce conversations. This is the weakest hypothesis; expect low reply rates.
 
 ## Why this wedge (QR + kitchen tickets) and not a full POS
@@ -38,7 +38,7 @@ Guest card capture, inventory, loyalty, HR, accounting, delivery aggregators, na
 
 ## Pricing
 
-One plan: **$29/month** (annual 20% off later if anyone asks). Trial 45 days, no card required. Below TouchBistro/Lightspeed/Foodics list prices; above “toy” pricing. ROI story: two prevented $15 mistakes per day dwarfs $29. That story is a **hypothesis**, not a measured customer result.
+One plan: **$29/month** (annual 20% off later if anyone asks). Trial 14 days, no card required. Two weeks covers onboarding plus multiple real services without delaying the conversion signal for six weeks. Below TouchBistro/Lightspeed/Foodics list prices; above “toy” pricing. ROI story: two prevented $15 mistakes per day dwarfs $29. That story is a **hypothesis**, not a measured customer result.
 
 ## Acquisition
 

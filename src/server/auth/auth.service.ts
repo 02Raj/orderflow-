@@ -8,7 +8,10 @@ import { COUNTRY_PRESETS, CountryPreset, presetWithRegions, resolvePreset } from
 import { BadRequestException, HttpError, NotFoundException, UnauthorizedException } from '../errors';
 import { Jwt } from '../jwt';
 
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 45);
+function trialDays(): number {
+  const configured = Number(process.env.TRIAL_DAYS ?? 14);
+  return Number.isInteger(configured) && configured >= 0 && configured <= 365 ? configured : 14;
+}
 
 export interface SignupInput {
   email: string;
@@ -55,7 +58,7 @@ export class AuthService {
     const timezone = region?.timezone ?? preset.timezone;
     const restaurantId = randomUUID();
     const userId = randomUUID();
-    const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+    const trialEndsAt = new Date(Date.now() + trialDays() * 24 * 60 * 60 * 1000);
     const slug = await this.uniqueSlug(input.restaurantName);
 
     await this.db.query(

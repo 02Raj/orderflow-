@@ -36,9 +36,9 @@ export default function SecurityPage() {
 
       <h2 className="display pt-4 text-2xl">Sub-processors</h2>
       <p>
-        Your chosen Postgres host when DATABASE_URL is set. Stripe, only if you turn on paid
-        billing. No analytics suite on the guest QR path. If that list grows, it will be updated
-        here first.
+        Your chosen Postgres host when DATABASE_URL is set. Dodo Payments acts as merchant of
+        record when paid billing is enabled; Stripe may be configured as an optional fallback. No
+        analytics suite runs on the guest QR path. If that list grows, it will be updated here first.
       </p>
 
       <h2 className="display pt-4 text-2xl">Your job</h2>

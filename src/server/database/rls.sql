@@ -14,6 +14,9 @@ $$;
 alter table restaurants enable row level security;
 alter table users enable row level security;
 alter table subscriptions enable row level security;
+-- Webhook receipts contain provider delivery metadata only and are server-internal.
+-- RLS is enabled without a client policy so browser JWTs cannot read or write them.
+alter table billing_webhook_events enable row level security;
 alter table dining_tables enable row level security;
 alter table menu_categories enable row level security;
 alter table menu_items enable row level security;

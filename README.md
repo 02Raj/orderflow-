@@ -28,19 +28,23 @@ Copy `.env.example` to `.env.local`.
 | --- | --- | --- |
 | `DATABASE_URL` | No | Unset = embedded PGlite Postgres. Set to your Supabase URI in production. |
 | `JWT_SECRET` | No | Change before any real restaurant. |
-| `STRIPE_SECRET_KEY` | No | Unset = mock checkout so you can test trial → paid. |
+| `DODO_PAYMENTS_ENV` | With Dodo | Keep `test_mode` while testing; use `live_mode` only at launch. |
+| `DODO_PAYMENTS_API_KEY` | With Dodo | Server-side test/live API key. |
+| `DODO_PRODUCT_ID` | With Dodo | Monthly recurring subscription product. |
+| `DODO_PAYMENTS_WEBHOOK_KEY` | With Dodo | Webhook endpoint signing secret. |
+| `STRIPE_SECRET_KEY` | No | Optional fallback; unset providers use mock checkout outside production. |
 | `STRIPE_PRICE_ID` | With Stripe | Recurring $29 price. |
 | `STRIPE_WEBHOOK_SECRET` | With Stripe | Signature verification. |
 | `APP_PUBLIC_URL` | Production | App origin. |
-| `TRIAL_DAYS` | No | Default 45. |
+| `TRIAL_DAYS` | No | Default 14. Checkout preserves only the remaining trial days. |
 
 API lives at `/api/*` on the same origin. SSE kitchen tickets need a long-running Node process (`npm run start`), not a serverless timeout.
 
 ## Deploy
 
-- **App:** Vercel or any Node host that can run `next start` (SSE). Env: `JWT_SECRET`, optional `DATABASE_URL` and Stripe keys.
+- **App:** Vercel or any Node host that can run `next start` (SSE). Env: `JWT_SECRET`, optional `DATABASE_URL`, and Dodo test keys while validating billing.
 - **Database:** Unset `DATABASE_URL` for local PGlite. Production: Supabase Postgres. Apply `src/server/database/schema.sql` then `rls.sql`.
 
 ## Product bet
 
-See `docs/STRATEGY.md`. The first objective is one real restaurant using this during service, then paying $29/month after the 45-day trial.
+See `docs/STRATEGY.md`. The first objective is one real restaurant using this during service, then paying $29/month after the 14-day trial.
