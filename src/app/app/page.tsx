@@ -85,41 +85,95 @@ export default function FloorPage() {
             </ul>
           </div>
         ) : null}
-        {ready && <section aria-labelledby="pickup-heading" className="card mt-5 p-4">
-          <h2 id="pickup-heading" className="display text-2xl">Ready for pickup</h2>
-          {pickupError && <p role="alert" className="mt-2 text-sm text-[var(--chili-dark)]">{pickupError}</p>}
-          {pickupMessage && <p role="status" className="mt-2 text-sm">{pickupMessage}</p>}
-          {pickups.length === 0 ? <p className="mt-2 text-sm text-[var(--ink-soft)]">No takeaway orders waiting for handover.</p> : (
-            <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {pickups.map((order) => <li key={order.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--rule)] p-3">
-                <div><strong>#{order.orderNumber} · {order.customerLabel}</strong>
-                  <p className="text-xs text-[var(--ink-soft)]">{order.paidMinor > 0 ? "Payment recorded" : order.totalMinor > 0 ? "Payment not recorded" : "No charge"}</p>
-                </div>
-                <button type="button" disabled={stale || pickupBusy !== null} className="btn btn-ink min-h-11" onClick={() => handOver(order.id, order.orderNumber)}>
-                  {pickupBusy === order.id ? "Saving…" : "Handed over"}
-                </button>
-              </li>)}
-            </ul>
-          )}
-        </section>}
         {!ready ? (
           <SkeletonGrid />
-        ) : live.length === 0 ? (
-          <EmptyState
-            title="Get your first ticket in three steps"
-            copy="Print a QR, open the kitchen screen, then order from a phone. Tickets appear here the moment they are sent."
-            steps={[
-              "Print a table QR on Tables",
-              "Open the kitchen board on a laptop or tablet",
-              "Scan the QR and send a test order",
-            ]}
-            action={
-              <Link href="/app/tables" className="btn btn-chili">
-                Print table QR codes
-              </Link>
-            }
-          />
         ) : (
+          <>
+            <dl className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="card p-4">
+                <dt className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-soft)]">Open tickets</dt>
+                <dd className="display mt-1 text-3xl">{live.length}</dd>
+              </div>
+              <div className="card p-4">
+                <dt className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-soft)]">Awaiting kitchen</dt>
+                <dd className="display mt-1 text-3xl text-[var(--chili-dark)]">{overdue.length}</dd>
+              </div>
+              <div className="card p-4">
+                <dt className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-soft)]">Ready for pickup</dt>
+                <dd className="display mt-1 text-3xl text-[var(--sage)]">{pickups.length}</dd>
+              </div>
+              <div className="card p-4">
+                <dt className="text-xs font-semibold uppercase tracking-widest text-[var(--ink-soft)]">QR ordering</dt>
+                <dd className="display mt-1 text-3xl">{restaurant?.orderingPaused ? "Paused" : "Active"}</dd>
+              </div>
+            </dl>
+
+            <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
+              <section aria-labelledby="pickup-heading" className="card p-5">
+                <h2 id="pickup-heading" className="display text-2xl">Ready for pickup</h2>
+                {pickupError && <p role="alert" className="mt-2 text-sm text-[var(--chili-dark)]">{pickupError}</p>}
+                {pickupMessage && <p role="status" className="mt-2 text-sm">{pickupMessage}</p>}
+                {pickups.length === 0 ? (
+                  <p className="mt-2 text-sm text-[var(--ink-soft)]">No takeaway orders waiting for handover.</p>
+                ) : (
+                  <ul className="mt-3 grid gap-2">
+                    {pickups.map((order) => (
+                      <li key={order.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--rule)] p-3">
+                        <div>
+                          <strong>#{order.orderNumber} · {order.customerLabel}</strong>
+                          <p className="text-xs text-[var(--ink-soft)]">
+                            {order.paidMinor > 0 ? "Payment recorded" : order.totalMinor > 0 ? "Payment not recorded" : "No charge"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={stale || pickupBusy !== null}
+                          className="btn btn-ink min-h-11"
+                          onClick={() => handOver(order.id, order.orderNumber)}
+                        >
+                          {pickupBusy === order.id ? "Saving…" : "Handed over"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {live.length === 0 ? (
+                <div className="card p-6">
+                  <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-[#f3d0c8] text-lg">⌀</div>
+                  <h2 className="display text-2xl">Get your first ticket in three steps</h2>
+                  <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+                    Print a QR, open the kitchen screen, then order from a phone. Tickets appear here the moment they are sent.
+                  </p>
+                  <ol className="mt-4 space-y-2 text-sm">
+                    {[
+                      "Print a table QR on Tables",
+                      "Open the kitchen board on a laptop or tablet",
+                      "Scan the QR and send a test order",
+                    ].map((step, i) => (
+                      <li key={step} className="flex gap-3">
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--paper-2)] text-xs font-semibold">
+                          {i + 1}
+                        </span>
+                        <span className="pt-0.5">{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                  <Link href="/app/tables" className="btn btn-chili mt-5">
+                    Print table QR codes
+                  </Link>
+                </div>
+              ) : (
+                <section className="card p-5">
+                  <h2 className="display text-2xl">Live kitchen queue</h2>
+                  <p className="mt-1 text-sm text-[var(--ink-soft)]">Tap Kitchen in the sidebar to bump items or print KOTs.</p>
+                </section>
+              )}
+            </div>
+          </>
+        )}
+        {ready && live.length > 0 ? (
           <ul className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {otherTickets.map((order) => (
               <li key={order.id} className={`card p-4 rise-in ${!stale && isAwaitingKitchen(order, now) ? "ring-2 ring-[var(--chili)]" : ""}`}>
@@ -144,7 +198,7 @@ export default function FloorPage() {
               </li>
             ))}
           </ul>
-        )}
+        ) : null}
       </div>
   );
 }

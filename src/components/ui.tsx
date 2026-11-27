@@ -39,7 +39,7 @@ export function EmptyState({
   steps?: string[];
 }) {
   return (
-    <div className="card mt-8 max-w-xl p-8">
+    <div className="card mt-6 w-full p-6 sm:p-8">
       <div className="mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-[#f3d0c8] text-xl">⌀</div>
       <h2 className="display text-2xl">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">{copy}</p>

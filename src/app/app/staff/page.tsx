@@ -76,7 +76,7 @@ export default function StaffPage() {
   }
 
   return (
-    <div className="grid gap-8 p-5 md:grid-cols-2 md:p-8">
+    <div className="mx-auto grid max-w-7xl items-start gap-8 p-5 md:grid-cols-2 md:p-8">
         <div>
           <PageHeader
             kicker="Team"
@@ -95,19 +95,39 @@ export default function StaffPage() {
           ) : (
             <ul className="card mt-6 divide-y divide-[var(--rule)] px-4">
               {staff.map((row) => (
-                <li key={row.id} className="flex justify-between py-3 text-sm">
+                <li key={row.id} className="flex items-center justify-between py-3 text-sm">
                   <span>
-                    {row.fullName}
-                    <span className="block text-[var(--ink-soft)]">{row.email}</span>
+                    <strong className="block">{row.fullName}</strong>
+                    <span className="text-xs text-[var(--ink-soft)]">{row.email}</span>
                   </span>
                   <span className="text-right">
-                    <span className="block capitalize">{row.role} · {row.isActive ? "Active" : "Disabled"}</span>
-                    {owner && row.role !== "owner" && <button disabled={busy} className="mt-1 min-h-9 underline" onClick={() => toggle(row)}>{row.isActive ? "Disable access" : "Enable access"}</button>}
+                    <span className="inline-block rounded-full bg-[var(--paper-2)] px-2.5 py-0.5 text-xs font-semibold capitalize">
+                      {row.role} · {row.isActive ? "Active" : "Disabled"}
+                    </span>
+                    {owner && row.role !== "owner" && <button disabled={busy} className="mt-1 block w-full text-right text-xs underline" onClick={() => toggle(row)}>{row.isActive ? "Disable access" : "Enable access"}</button>}
                   </span>
                 </li>
               ))}
             </ul>
           )}
+
+          <div className="card mt-6 p-5">
+            <h2 className="font-semibold">Station permissions</h2>
+            <dl className="mt-3 space-y-2.5 text-xs text-[var(--ink-soft)]">
+              <div className="flex justify-between gap-4 border-b border-[var(--rule)] pb-2">
+                <dt className="font-semibold text-[var(--ink)]">Kitchen</dt>
+                <dd>Live KDS board, bump items, print KOT, recall tickets</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-[var(--rule)] pb-2">
+                <dt className="font-semibold text-[var(--ink)]">Floor staff</dt>
+                <dd>Floor view, Take Order, Tickets &amp; bill printing</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="font-semibold text-[var(--ink)]">Manager</dt>
+                <dd>Menu, Tables &amp; QR, Reports, and Settings</dd>
+              </div>
+            </dl>
+          </div>
         </div>
         {owner && <form method="post" onSubmit={create} className="card p-5">
           <h2 className="font-semibold">Invite a station login</h2>

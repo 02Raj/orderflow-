@@ -298,7 +298,7 @@ export default function TakeOrderPage() {
             <div className="mt-3 space-y-6">
               {visibleGroups.map((group) => <section key={group.id}>
                 <h2 className="display mb-2 text-xl font-semibold">{group.name}</h2>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                   {group.items.map((item) => <button key={item.id} type="button" disabled={!!pendingAttempt}
                     className="card flex min-h-16 scroll-mt-24 items-start justify-between gap-3 p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60"
                     onClick={() => {
@@ -315,7 +315,8 @@ export default function TakeOrderPage() {
               </section>)}
             </div>
           </section>
-          <aside id="current-ticket" tabIndex={-1} aria-labelledby="ticket-heading" className="card min-w-0 p-4 sm:p-5 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
+          <aside id="current-ticket" tabIndex={-1} aria-labelledby="ticket-heading" className="card flex min-h-[380px] min-w-0 flex-col justify-between p-4 sm:p-5 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
+            <div>
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="ticket-heading" className="display text-2xl">Current ticket</h2>
               <a href="#dish-search" className="py-2 text-sm underline lg:hidden">Back to dishes</a>
@@ -377,6 +378,7 @@ export default function TakeOrderPage() {
               {activeFulfillmentType === "dine_in" && !currentTable && !pendingAttempt ? <a href="#table-picker" className="mt-3 inline-block py-2 text-sm underline">Choose a table to send this ticket</a> : null}
               {activeFulfillmentType === "takeaway" && !customerLabel.trim() && !pendingAttempt ? <a href="#pickup-name" className="mt-3 inline-block py-2 text-sm underline">Add a pickup name to send this ticket</a> : null}
             </>}
+            </div>
             <button type="button" className="btn btn-chili mt-4 min-h-11 w-full py-3" disabled={busy || (!pendingAttempt && (!count || (activeFulfillmentType === "dine_in" ? !currentTable : !customerLabel.trim())))} onClick={send}>
               {busy ? "Sending…" : pendingAttempt ? "Retry same ticket" : activeFulfillmentType === "takeaway" ? "Send takeaway to kitchen" : currentTable ? `Send Table ${currentTable.tableNumber} to kitchen` : "Send to kitchen"}
             </button>

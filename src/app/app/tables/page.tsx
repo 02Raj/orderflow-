@@ -204,23 +204,23 @@ export default function TablesPage() {
           }}>Add table</a>
         </div>
         {visible.length === 0 ? <EmptyState title={tables.length ? "No tables in this area" : "No tables yet"}
-          copy={tables.length ? "Choose another area or add a table." : "Add your first table to create its guest QR."} /> : <ul className="divide-y divide-[var(--rule)] card overflow-hidden">
+          copy={tables.length ? "Choose another area or add a table." : "Add your first table to create its guest QR."} /> : <ul className="grid gap-2.5 sm:grid-cols-2">
           {visible.map((table) => <li key={table.id}>
             <a href="#table-details" aria-current={selectedId === table.id ? "true" : undefined}
               onClick={(event) => { if (busy) event.preventDefault(); else selectTable(table.id); }}
-              className={`flex min-h-14 items-center justify-between gap-3 px-4 py-3 hover:bg-[var(--paper)] ${selectedId === table.id ? "bg-[var(--paper)]" : ""}`}>
+              className={`card flex min-h-16 items-center justify-between gap-3 px-4 py-3 transition hover:border-[var(--ink-soft)] ${selectedId === table.id ? "border-[var(--ink)] bg-[var(--paper-2)]/60" : ""}`}>
               <span className="min-w-0 break-words">
                 <strong className="block">Table {table.tableNumber}{table.label ? ` · ${table.label}` : ""}</strong>
-                <span className="text-sm text-[var(--ink-soft)]">{table.area || "Unassigned"}</span>
+                <span className="text-xs text-[var(--ink-soft)]">{table.area || "Unassigned"}</span>
               </span>
-              <span className={`shrink-0 text-sm ${table.isActive ? "text-[var(--sage)]" : "text-[var(--ink-soft)]"}`}>
+              <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${table.isActive ? "bg-[#cfe3d6]/70 text-[var(--sage)]" : "bg-[var(--paper-2)] text-[var(--ink-soft)]"}`}>
                 {table.isActive ? "Active" : "Inactive"}
               </span>
             </a>
           </li>)}
         </ul>}
       </section>
-      <section id="table-details" tabIndex={-1} aria-labelledby="table-details-heading" className="card min-w-0 scroll-mt-4 p-4 sm:p-5">
+      <section id="table-details" tabIndex={-1} aria-labelledby="table-details-heading" className="card min-w-0 scroll-mt-4 p-4 sm:p-5 lg:sticky lg:top-6">
         <h2 id="table-details-heading" className="display break-words text-2xl">
           {editing ? "Edit table" : selected ? `Table ${selected.tableNumber}${selected.label ? ` · ${selected.label}` : ""}` : "Add table"}
         </h2>
