@@ -24,7 +24,7 @@ export interface SubscriptionView {
 
 interface SubscriptionRow {
   restaurant_id: string;
-  status: SubscriptionStatus;
+  status: SubscriptionStatus; 
   plan: string;
   trial_ends_at: string;
   current_period_end: string | null;
