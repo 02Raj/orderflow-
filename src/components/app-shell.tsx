@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { clearSession, getToken, getUser, SessionUser } from "@/lib/session";
+import { clearSession, getToken, getUser, openLocation, reloadWhenSignInChanges, SessionUser } from "@/lib/session";
 import { PAYMENTS_ENABLED } from "@/lib/payments";
-import { BillingStatus, Restaurant } from "@/lib/types";
+import { BillingStatus, Restaurant, VenueLocation } from "@/lib/types";
 import { useOrderStream } from "@/lib/use-order-stream";
 import { playNewOrderSound, playReadyBellSound } from "@/lib/kitchen-sound";
 import { Icons } from "@/components/icons";
@@ -31,12 +31,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [locations, setLocations] = useState<VenueLocation[]>([]);
+  const [switching, setSwitching] = useState(false);
+  const [locationError, setLocationError] = useState("");
   const [ready, setReady] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [floorBell, setFloorBell] = useState(false);
   const moreDialog = useRef<HTMLDialogElement>(null);
   const { orders, setOnCreated, setOnStatusChange } = useOrderStream(true);
   const newCount = orders.filter((o) => o.status === "new").length;
+
+  useEffect(reloadWhenSignInChanges, []);
 
   useEffect(() => {
     setOnCreated(() => {
@@ -58,6 +63,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    if (session.role === "owner") {
+      api<VenueLocation[]>("/auth/locations", { token, signal: controller.signal })
+        .then(setLocations).catch(() => undefined);
+    }
     Promise.all([
       api<Restaurant>("/restaurant", { token }),
       PAYMENTS_ENABLED
@@ -78,6 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, []);
 
@@ -109,6 +120,18 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const links = NAV.filter((item) => item.roles.includes(user.role));
   const moreLinks = links.slice(4);
+
+  async function switchLocation(id: string) {
+    if (switching) return;
+    setSwitching(true);
+    setLocationError("");
+    try {
+      await openLocation(id);
+    } catch (error) {
+      setLocationError(error instanceof Error ? error.message : "Could not switch locations.");
+      setSwitching(false);
+    }
+  }
 
   return (
     <div className="min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom))] md:grid md:grid-cols-[240px_1fr] md:pb-0">
@@ -161,6 +184,23 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
         </div>
+        {user.role === "owner" && (
+          <div className="mx-4 mb-3">
+            {locations.length > 1 && (
+              <label className="block text-xs font-semibold">
+                Active location
+                <select className="field mt-1" value={user.restaurantId} disabled={switching}
+                  onChange={(event) => void switchLocation(event.target.value)}>
+                  {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+                </select>
+              </label>
+            )}
+            {locationError && <p role="alert" className="mt-1 text-xs text-[var(--chili-dark)]">{locationError}</p>}
+            {user.email !== "owner@harbourandrye.demo" && (
+              <Link href="/app/locations" className="mt-2 inline-block text-xs font-semibold underline">Manage locations</Link>
+            )}
+          </div>
+        )}
         {PAYMENTS_ENABLED && billing && !billing.accessBlocked && billing.status === "trialing" ? (
           <p className="mx-4 mb-3 rounded-[12px] border border-[#ead7a4] bg-[#fff4d6] px-3 py-2 text-xs">
             Trial · <strong>{billing.daysLeftInTrial} days left</strong> · {billing.priceLabel}

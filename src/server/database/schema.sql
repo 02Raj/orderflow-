@@ -227,6 +227,9 @@ alter table users add column if not exists last_login_at timestamptz;
 alter table users add column if not exists session_version integer not null default 0;
 alter table restaurants add column if not exists kitchen_target_minutes integer;
 alter table restaurants add column if not exists kitchen_urgent_minutes integer;
+-- A venue without a business root is its own primary location.
+alter table restaurants add column if not exists business_root_id uuid references restaurants (id) on delete restrict;
+create index if not exists restaurants_business_root_idx on restaurants (business_root_id);
 alter table orders add column if not exists correction_summary text;
 alter table orders add column if not exists tax_rate_snapshot_bp integer;
 alter table orders add column if not exists tax_inclusive_snapshot boolean;

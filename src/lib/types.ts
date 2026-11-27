@@ -1,3 +1,13 @@
+export interface VenueLocation {
+  id: string;
+  name: string;
+  countryCode: string;
+  currency: string;
+  taxRegion: string | null;
+  billingStatus: string | null;
+  billingInterval: import('./billing-prices').BillingInterval | null;
+}
+
 export interface Restaurant {
   id: string;
   name: string;

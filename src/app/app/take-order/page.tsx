@@ -6,7 +6,7 @@ import { modifierSelectionError } from "@/lib/modifiers";
 import { PageHeader } from "@/components/ui";
 import { ThermalPrintSheet } from "@/components/thermal-print-sheet";
 import { ApiError, api, formatMoney } from "@/lib/api";
-import { getToken } from "@/lib/session";
+import { getToken, getUser, isDefaultLocationSession } from "@/lib/session";
 import { computeTotals } from "@/lib/tax";
 import type { DiningTable, MenuCategory, MenuItem, Order, Restaurant } from "@/lib/types";
 import { isAwaitingKitchen, syncIsStale, ticketStatusLabel, useNow } from "@/lib/use-order-stream";
@@ -30,6 +30,10 @@ interface StaffAttempt {
 }
 
 const PENDING_KEY = "orderflow:staff-pending";
+
+function pendingKey() {
+  return `${PENDING_KEY}:${getUser()?.restaurantId}`;
+}
 
 function optionCost(item: MenuItem, ids: string[]) {
   return item.modifiers.reduce((sum, option) => sum + (ids.includes(option.id) ? option.priceAdjustmentMinor : 0), 0);
@@ -93,14 +97,20 @@ export default function TakeOrderPage() {
   }, [sentId, tracking]);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(PENDING_KEY);
+    const key = pendingKey();
+    const legacy = isDefaultLocationSession() ? sessionStorage.getItem(PENDING_KEY) : null;
+    const saved = sessionStorage.getItem(key) ?? legacy;
+    if (legacy) {
+      if (saved) sessionStorage.setItem(key, saved);
+      sessionStorage.removeItem(PENDING_KEY);
+    }
     if (saved) {
       try {
         const attempt = JSON.parse(saved) as StaffAttempt;
         // Restore the browser-only retry payload once hydration has finished.
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setPendingAttempt(attempt);
-      } catch { sessionStorage.removeItem(PENDING_KEY); }
+      } catch { sessionStorage.removeItem(key); }
     }
   }, []);
 
@@ -169,6 +179,7 @@ export default function TakeOrderPage() {
 
   async function send() {
     const token = getToken();
+    const storageKey = pendingKey();
     const destinationReady = fulfillmentType === "takeaway" ? !!customerLabel.trim() : !!currentTable;
     if (!token || sending.current || (!pendingAttempt && (!destinationReady || !lines.length))) return;
     const request: StaffAttempt = pendingAttempt ?? {
@@ -188,13 +199,13 @@ export default function TakeOrderPage() {
     setBusy(true);
     setError("");
     try {
-      sessionStorage.setItem(PENDING_KEY, JSON.stringify(request));
+      sessionStorage.setItem(storageKey, JSON.stringify(request));
       const order = await api<Order>("/orders", {
         method: "POST",
         token,
         json: request,
       });
-      sessionStorage.removeItem(PENDING_KEY);
+      sessionStorage.removeItem(storageKey);
       setSent(order);
       setLastTicketSync(Date.now());
       setLines([]);
@@ -206,7 +217,7 @@ export default function TakeOrderPage() {
       setPendingAttempt(null);
     } catch (err) {
       if (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
-        sessionStorage.removeItem(PENDING_KEY);
+        sessionStorage.removeItem(storageKey);
         setPendingAttempt(null);
         setError(err.message);
       } else {

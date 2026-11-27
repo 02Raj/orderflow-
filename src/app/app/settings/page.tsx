@@ -372,7 +372,7 @@ export default function SettingsPage() {
             {orderingMessage ? <p className="mt-2 text-xs" role="status">{orderingMessage}</p> : null}
           </div>
         {PAYMENTS_ENABLED ? (
-        <div className="card p-5">
+        <div id="billing" className="card scroll-mt-4 p-5">
           <h2 className="display text-2xl">Billing</h2>
           {billing ? (
             <>

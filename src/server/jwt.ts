@@ -10,11 +10,11 @@ function secret() {
 }
 
 export class Jwt {
-  signAsync(payload: JWTPayload & Record<string, unknown>) {
+  signAsync(payload: JWTPayload & Record<string, unknown>, expiresAt?: number) {
     return new SignJWT(payload as JWTPayload)
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
-      .setExpirationTime(process.env.JWT_EXPIRES_IN ?? '12h')
+      .setExpirationTime(expiresAt ?? process.env.JWT_EXPIRES_IN ?? '12h')
       .sign(secret());
   }
 
@@ -24,7 +24,12 @@ export class Jwt {
   }
 }
 
-export async function userFromToken(token: string): Promise<AuthenticatedUser & { sessionVersion: number }> {
+export interface VenueSession extends AuthenticatedUser {
+  sessionVersion: number;
+  expiresAt?: number;
+}
+
+export async function userFromToken(token: string): Promise<VenueSession> {
   const payload = await new Jwt().verifyAsync<{
     sub: string;
     restaurant_id: string;
@@ -32,6 +37,7 @@ export async function userFromToken(token: string): Promise<AuthenticatedUser & 
     name: string;
     role: AuthenticatedUser['role'];
     session_version?: number;
+    exp?: number;
   }>(token);
   return {
     id: payload.sub,
@@ -40,5 +46,6 @@ export async function userFromToken(token: string): Promise<AuthenticatedUser & 
     fullName: payload.name,
     role: payload.role,
     sessionVersion: payload.session_version ?? 0,
+    expiresAt: payload.exp,
   };
 }

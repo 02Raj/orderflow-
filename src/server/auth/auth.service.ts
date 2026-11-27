@@ -1,12 +1,14 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService, type QueryClient } from '../database/database.service';
 import { AuthenticatedUser, Role } from '../common/types';
 import { AuditService } from '../audit/audit.service';
 import { resolveRegion } from './tax-regions';
 import { COUNTRY_PRESETS, CountryPreset, presetWithRegions, resolvePreset } from './country-presets';
-import { BadRequestException, HttpError, NotFoundException, UnauthorizedException } from '../errors';
-import { Jwt } from '../jwt';
+import { BadRequestException, ForbiddenException, HttpError, NotFoundException, UnauthorizedException } from '../errors';
+import { Jwt, type VenueSession } from '../jwt';
+import { PAYMENTS_ENABLED } from '../../lib/payments';
+import type { VenueLocation } from '../../lib/types';
 
 function trialDays(): number {
   const configured = Number(process.env.TRIAL_DAYS ?? 14);
@@ -91,18 +93,7 @@ export class AuthService {
       [randomUUID(), restaurantId, trialEndsAt.toISOString()],
     );
 
-    const tableValues: string[] = [];
-    const tableParams: unknown[] = [restaurantId];
-    for (let n = 1; n <= 8; n++) {
-      const idIdx = tableParams.push(randomUUID());
-      const numIdx = tableParams.push(n);
-      const qrIdx = tableParams.push(randomUUID());
-      tableValues.push(`($${idIdx}, $1, $${numIdx}, $${qrIdx})`);
-    }
-    await this.db.query(
-      `insert into dining_tables (id, restaurant_id, table_number, qr_token) values ${tableValues.join(', ')}`,
-      tableParams,
-    );
+    await this.seedTables(this.db, restaurantId);
 
     await this.audit.record({
       restaurantId,
@@ -120,6 +111,95 @@ export class AuthService {
       fullName: input.fullName.trim(),
       role: 'owner',
     });
+  }
+
+  private async seedTables(db: QueryClient, restaurantId: string) {
+    const tableValues: string[] = [];
+    const tableParams: unknown[] = [restaurantId];
+    for (let n = 1; n <= 8; n++) {
+      const idIdx = tableParams.push(randomUUID());
+      const numIdx = tableParams.push(n);
+      const qrIdx = tableParams.push(randomUUID());
+      tableValues.push(`($${idIdx}, $1, $${numIdx}, $${qrIdx})`);
+    }
+    await db.query(
+      `insert into dining_tables (id, restaurant_id, table_number, qr_token) values ${tableValues.join(', ')}`,
+      tableParams,
+    );
+  }
+
+  async listLocations(actor: VenueSession) {
+    return this.db.many<VenueLocation>(
+      `select r.id, r.name, r.country_code as "countryCode", r.currency, r.tax_region as "taxRegion",
+              case when $4 and s.status = 'trialing' and s.trial_ends_at <= now() then 'expired'
+                   else s.status end as "billingStatus", s.billing_interval as "billingInterval"
+       from users u
+       join restaurants r on r.id = u.restaurant_id or (u.role = 'owner' and r.business_root_id = u.restaurant_id)
+       left join subscriptions s on s.restaurant_id = r.id
+       where u.id = $1 and u.is_active and u.session_version = $2
+       order by (r.id = $3) desc, r.created_at, r.id`,
+      [actor.id, actor.sessionVersion, actor.restaurantId, PAYMENTS_ENABLED],
+    );
+  }
+
+  async switchLocation(actor: VenueSession, locationId: unknown) {
+    if (typeof locationId !== 'string' || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(locationId)) {
+      throw new BadRequestException('Choose a valid location.');
+    }
+    if (!await this.sessionIsCurrent(actor.id, locationId, actor.sessionVersion)) {
+      throw new NotFoundException('Location not found.');
+    }
+    const { id, email, fullName, role, sessionVersion, expiresAt } = actor;
+    return this.issueToken({ id, email, fullName, role, restaurantId: locationId.toLowerCase() }, sessionVersion, expiresAt);
+  }
+
+  async createLocation(actor: VenueSession, input: { name?: unknown; countryCode?: unknown; taxRegion?: unknown } | null) {
+    const name = typeof input?.name === 'string' ? input.name.trim() : '';
+    if (!name || name.length > 100) throw new BadRequestException('Use a location name between 1 and 100 characters.');
+    const preset = COUNTRY_PRESETS.find((country) => country.countryCode === input?.countryCode);
+    if (!preset) throw new BadRequestException('Choose a supported country.');
+    const region = typeof input?.taxRegion === 'string' && input.taxRegion
+      ? resolveRegion(preset.countryCode, input.taxRegion)
+      : undefined;
+    if ((input?.taxRegion && !region) || (presetWithRegions(preset).regions?.length && !region)) {
+      throw new BadRequestException('Choose the region for this location.');
+    }
+    const restaurantId = randomUUID();
+    const slug = await this.uniqueSlug(name);
+    await this.db.transaction(async (tx) => {
+      const owner = await tx.one<{ restaurant_id: string; email: string }>(
+        `select u.restaurant_id, u.email from users u join restaurants root on root.id = u.restaurant_id
+         where u.id = $1 and u.is_active and u.role = 'owner' and u.session_version = $2
+         and root.business_root_id is null for update of root`,
+        [actor.id, actor.sessionVersion],
+      );
+      if (!owner || owner.email === 'owner@harbourandrye.demo') {
+        throw new ForbiddenException('Only a business owner can add locations to their own account.');
+      }
+      if (await tx.one(
+        'select id from restaurants where (id = $1 or business_root_id = $1) and lower(name) = lower($2)',
+        [owner.restaurant_id, name],
+      )) throw new BadRequestException('This business already has a location with that name.');
+
+      await tx.query(
+        `insert into restaurants (id, name, slug, country_code, currency, locale, timezone, tax_label,
+                                  tax_rate_bp, tax_inclusive, tax_region, business_root_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [restaurantId, name, slug, preset.countryCode, preset.currency, preset.locale,
+          region?.timezone ?? preset.timezone, region?.taxLabel ?? preset.taxLabel,
+          region?.taxRateBp ?? preset.taxRateBp, preset.taxInclusive, region?.code ?? null, owner.restaurant_id],
+      );
+      await tx.query(
+        `insert into subscriptions (id, restaurant_id, status, plan, trial_ends_at)
+         values ($1, $2, 'trialing', 'starter', $3)`,
+        [randomUUID(), restaurantId, new Date(Date.now() + trialDays() * 86400000).toISOString()],
+      );
+      await this.seedTables(tx, restaurantId);
+    });
+    await this.audit.record({
+      restaurantId, userId: actor.id, action: 'location.create', entity: 'restaurant', entityId: restaurantId,
+    });
+    return { id: restaurantId, name };
   }
 
   async login(email: string, password: string) {
@@ -143,7 +223,9 @@ export class AuthService {
 
   async sessionIsCurrent(id: string, restaurantId: string, version: number) {
     return !!await this.db.one(
-      'select id from users where id = $1 and restaurant_id = $2 and is_active and session_version = $3',
+      `select u.id from users u join restaurants r on r.id = $2
+       where u.id = $1 and u.is_active and u.session_version = $3
+       and (u.restaurant_id = r.id or (u.role = 'owner' and r.business_root_id = u.restaurant_id))`,
       [id, restaurantId, version],
     );
   }
@@ -166,6 +248,9 @@ export class AuthService {
     actor: AuthenticatedUser,
     input: { email: string; password: string; fullName: string; role: 'manager' | 'staff' | 'kitchen' },
   ) {
+    if (!['manager', 'staff', 'kitchen'].includes(input?.role)) {
+      throw new BadRequestException('Choose a valid staff role.');
+    }
     const email = input.email.trim().toLowerCase();
     const existing = await this.db.one('select id from users where email = $1', [email]);
     if (existing) throw new BadRequestException('An account with that email already exists');
@@ -224,7 +309,7 @@ export class AuthService {
       entityId: actor.id,
     });
     const session = await this.issueToken({
-      id: user.id, restaurantId: user.restaurant_id, email: user.email, fullName: user.full_name, role: user.role,
+      id: user.id, restaurantId: actor.restaurantId, email: user.email, fullName: user.full_name, role: user.role,
     }, updated.session_version);
     return { ok: true, ...session };
   }
@@ -342,7 +427,7 @@ export class AuthService {
     return `${base}-${randomUUID().slice(0, 8)}`;
   }
 
-  private async issueToken(user: AuthenticatedUser, sessionVersion = 0) {
+  private async issueToken(user: AuthenticatedUser, sessionVersion = 0, expiresAt?: number) {
     const token = await this.jwt.signAsync({
       sub: user.id,
       restaurant_id: user.restaurantId,
@@ -351,7 +436,7 @@ export class AuthService {
       role: user.role,
       session_version: sessionVersion,
       app_metadata: { restaurant_id: user.restaurantId, role: user.role },
-    });
+    }, expiresAt);
     return { token, user };
   }
 }

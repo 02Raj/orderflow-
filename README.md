@@ -42,8 +42,10 @@ Copy `.env.example` to `.env.local`.
 
 API lives at `/api/*` on the same origin. SSE kitchen tickets need a long-running Node process (`npm run start`), not a serverless timeout.
 
-Apply the updated database schema before enabling yearly checkout on an existing deployment.
+Apply the updated database schema to existing Postgres installations before deploying the app. The locations migration adds `restaurants.business_root_id`; existing venue IDs and QR codes stay valid.
 Use separate recurring products or prices for each interval and verify the USD amount and renewal interval in the provider's test checkout before switching to live. An unconfigured yearly option is hidden in Billing settings.
+
+Owners can use **Manage locations** to add a branch and switch between branches. Staff accounts and subscriptions are scoped to a single location.
 
 ## Deploy
 

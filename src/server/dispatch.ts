@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dispatchAdmin } from './admin';
-import { userFromToken } from './jwt';
+import { userFromToken, type VenueSession } from './jwt';
 import { HttpError, UnauthorizedException, NotFoundException, BadRequestException } from './errors';
 import { assertRole } from './roles';
 import { clientKey, throttle } from './throttle';
@@ -62,7 +62,7 @@ function bearer(request: NextRequest): string | null {
   return query.get('access_token') || query.get('token');
 }
 
-async function requireUser(request: NextRequest, auth: Awaited<ReturnType<typeof getServices>>['auth']): Promise<AuthenticatedUser & { sessionVersion: number }> {
+async function requireUser(request: NextRequest, auth: Awaited<ReturnType<typeof getServices>>['auth']): Promise<VenueSession> {
   const token = bearer(request);
   if (!token) throw new UnauthorizedException('Missing bearer token');
   try {
@@ -183,6 +183,24 @@ export async function dispatch(request: NextRequest, segments: string[]): Promis
     }
 
     if (method === 'GET' && path === '/auth/me') return json(user);
+
+    if (method === 'GET' && path === '/auth/locations') {
+      assertRole(user!, 'owner');
+      return json(await svc.auth.listLocations(user!));
+    }
+
+    if (method === 'POST' && path === '/auth/locations') {
+      assertRole(user!, 'owner');
+      throttle(`create-location:${user!.id}`, 5, 60);
+      const body = await readJson<{ name?: unknown; countryCode?: unknown; taxRegion?: unknown }>(request);
+      return json(await svc.auth.createLocation(user!, body), 201);
+    }
+
+    if (method === 'POST' && path === '/auth/locations/switch') {
+      assertRole(user!, 'owner');
+      const body = await readJson<{ locationId?: unknown }>(request);
+      return json(await svc.auth.switchLocation(user!, body?.locationId));
+    }
 
     if (method === 'GET' && path === '/auth/staff') {
       assertRole(user!, 'manager');

@@ -533,6 +533,62 @@ test('required modifier groups validate QR, staff and ticket additions while pre
   await assert.rejects(() => orders.createStaffOrder(owner, order([regular.id])), /no longer available/);
 });
 
+describe('business locations', () => {
+  test('switches the same owner between separate branches and keeps staff, QR codes and billing scoped', async () => {
+    const root = await auth.signup({
+      email: 'ss-owner@example.test', password: 'ss-password-1', fullName: 'SS Owner',
+      restaurantName: 'SS Cafe Marina', countryCode: 'AE',
+    });
+    const marina = await userFromToken(root.token);
+    const marinaVenue = await restaurants.findById(marina.restaurantId);
+    const [marinaTable] = await tables.list(marina.restaurantId);
+    const branch = await auth.createLocation(marina, { name: 'SS Cafe JLT', countryCode: 'AE' });
+    const switched = await auth.switchLocation(marina, branch.id);
+    const jlt = await userFromToken(switched.token);
+    assert.equal(jlt.id, marina.id);
+    assert.equal(jlt.restaurantId, branch.id);
+    assert.equal(jlt.expiresAt, marina.expiresAt);
+    assert.deepEqual((await auth.listLocations(jlt)).map(({ id }) => id), [branch.id, marina.restaurantId]);
+    assert.equal((await auth.switchLocation(jlt, marina.restaurantId)).user.restaurantId, marina.restaurantId);
+    await assert.rejects(() => auth.switchLocation(jlt, owner.restaurantId), /location not found/i);
+    await assert.rejects(() => auth.createLocation(jlt, { name: 'SS Cafe JLT', countryCode: 'AE' }), /already has a location/i);
+
+    const jltVenue = await restaurants.findById(jlt.restaurantId);
+    const [jltTable] = await tables.list(jlt.restaurantId);
+    assert.equal(jltVenue.currency, 'AED');
+    assert.notEqual(jltTable.qrToken, marinaTable.qrToken);
+    assert.equal((await tables.findByToken(marinaVenue.slug, marinaTable.qrToken))?.restaurantId, marina.restaurantId);
+    assert.equal(await tables.findByToken(jltVenue.slug, marinaTable.qrToken), null);
+
+    const category = await menu.createCategory(jlt, 'Coffee');
+    const coffee = await menu.createItem(jlt, { categoryId: category.id, name: 'Latte', priceMinor: 1200 });
+    const ticket = await orders.createGuestOrder({
+      restaurantId: jlt.restaurantId, tableId: jltTable.id, clientRef: randomUUID(),
+      lines: [{ menuItemId: coffee.id, quantity: 1 }],
+    });
+    assert.equal((await orders.findById(jlt.restaurantId, ticket.id)).id, ticket.id);
+    await assert.rejects(() => orders.findById(marina.restaurantId, ticket.id), /not found/i);
+    assert.equal((await menu.getPublicMenu(marina.restaurantId)).items.length, 0);
+
+    const staff = await auth.createStaff(jlt, {
+      email: 'ss-jlt-staff@example.test', password: 'ss-password-2', fullName: 'JLT Staff', role: 'manager',
+    });
+    const staffSession = await userFromToken((await auth.login(staff.email, 'ss-password-2')).token);
+    assert.equal(staffSession.restaurantId, jlt.restaurantId);
+    assert.equal(await auth.sessionIsCurrent(staffSession.id, marina.restaurantId, staffSession.sessionVersion), false);
+    await assert.rejects(() => auth.switchLocation(staffSession, marina.restaurantId), /location not found/i);
+    await assert.rejects(() => auth.createLocation(staffSession, { name: 'Staff branch', countryCode: 'AE' }), /business owner/i);
+
+    await billing.markActive(jlt.restaurantId, { provider: 'mock', billing_interval: 'yearly' });
+    assert.equal((await billing.status(jlt.restaurantId)).priceLabel, 'US$290 / year');
+    assert.equal((await billing.status(marina.restaurantId)).status, 'trialing');
+    const changed = await auth.changePassword(jlt, 'ss-password-1', 'ss-password-3');
+    assert.equal(changed.user.restaurantId, jlt.restaurantId);
+    assert.equal(await auth.sessionIsCurrent(jlt.id, jlt.restaurantId, jlt.sessionVersion), false);
+    assert.equal(await auth.sessionIsCurrent(marina.id, marina.restaurantId, marina.sessionVersion), false);
+  });
+});
+
 describe('dodo payments webhook', () => {
   test('verifies Standard Webhooks signature and activates / cancels subscription', async () => {
     const secretRaw = Buffer.from('test-dodo-webhook-secret-32-bytes!!').toString('base64');
